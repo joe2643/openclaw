@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CoreConfig } from "../types.js";
 import {
+  getMatrixScopedEnvVarNames,
   resolveImplicitMatrixAccountId,
   resolveMatrixConfig,
   resolveMatrixConfigForAccount,
@@ -97,6 +98,15 @@ describe("resolveMatrixConfig", () => {
     expect(resolved.deviceName).toBe("Ops Device");
   });
 
+  it("uses collision-free scoped env var names for normalized account ids", () => {
+    expect(getMatrixScopedEnvVarNames("ops-prod").accessToken).toBe(
+      "MATRIX_OPS_X2D_PROD_ACCESS_TOKEN",
+    );
+    expect(getMatrixScopedEnvVarNames("ops_prod").accessToken).toBe(
+      "MATRIX_OPS_X5F_PROD_ACCESS_TOKEN",
+    );
+  });
+
   it("prefers channels.matrix.accounts.default over global env for the default account", () => {
     const cfg = {
       channels: {
@@ -170,6 +180,65 @@ describe("resolveMatrixConfig", () => {
     expect(() => resolveMatrixAuthContext({ cfg, env: {} as NodeJS.ProcessEnv })).toThrow(
       /channels\.matrix\.defaultAccount.*--account <id>/i,
     );
+  });
+
+  it("rejects explicit non-default account ids that are neither configured nor scoped in env", () => {
+    const cfg = {
+      channels: {
+        matrix: {
+          homeserver: "https://legacy.example.org",
+          accessToken: "legacy-token",
+          accounts: {
+            ops: {
+              homeserver: "https://ops.example.org",
+              accessToken: "ops-token",
+            },
+          },
+        },
+      },
+    } as CoreConfig;
+
+    expect(() =>
+      resolveMatrixAuthContext({ cfg, env: {} as NodeJS.ProcessEnv, accountId: "typo" }),
+    ).toThrow(/Matrix account "typo" is not configured/i);
+  });
+
+  it("allows explicit non-default account ids backed only by scoped env vars", () => {
+    const cfg = {
+      channels: {
+        matrix: {
+          homeserver: "https://legacy.example.org",
+          accessToken: "legacy-token",
+        },
+      },
+    } as CoreConfig;
+    const env = {
+      MATRIX_OPS_HOMESERVER: "https://ops.example.org",
+      MATRIX_OPS_ACCESS_TOKEN: "ops-token",
+    } as NodeJS.ProcessEnv;
+
+    expect(resolveMatrixAuthContext({ cfg, env, accountId: "ops" }).accountId).toBe("ops");
+  });
+
+  it("does not inherit the base deviceId for non-default accounts", () => {
+    const cfg = {
+      channels: {
+        matrix: {
+          homeserver: "https://base.example.org",
+          accessToken: "base-token",
+          deviceId: "BASEDEVICE",
+          accounts: {
+            ops: {
+              homeserver: "https://ops.example.org",
+              accessToken: "ops-token",
+            },
+          },
+        },
+      },
+    } as CoreConfig;
+
+    const resolved = resolveMatrixConfigForAccount(cfg, "ops", {} as NodeJS.ProcessEnv);
+    expect(resolved.deviceId).toBeUndefined();
   });
 
   it("rejects insecure public http Matrix homeservers", () => {

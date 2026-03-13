@@ -147,6 +147,33 @@ describe("registerMatrixAutoJoin", () => {
     expect(joinRoom).toHaveBeenCalledWith("!room:example.org");
   });
 
+  it("logs and skips allowlist alias resolution failures", async () => {
+    const { client, getInviteHandler, joinRoom, resolveRoom } = createClientStub();
+    const error = vi.fn();
+    resolveRoom.mockRejectedValue(new Error("temporary homeserver failure"));
+
+    registerMatrixAutoJoin({
+      client,
+      accountConfig: {
+        autoJoin: "allowlist",
+        autoJoinAllowlist: ["#allowed:example.org"],
+      },
+      runtime: {
+        log: vi.fn(),
+        error,
+      } as unknown as import("openclaw/plugin-sdk/matrix").RuntimeEnv,
+    });
+
+    const inviteHandler = getInviteHandler();
+    expect(inviteHandler).toBeTruthy();
+    await expect(inviteHandler!("!room:example.org", {})).resolves.toBeUndefined();
+
+    expect(joinRoom).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("matrix: failed resolving allowlisted alias #allowed:example.org:"),
+    );
+  });
+
   it("does not trust room-provided alias claims for allowlist joins", async () => {
     const { client, getInviteHandler, joinRoom, resolveRoom } = createClientStub();
     resolveRoom.mockResolvedValue("!different-room:example.org");

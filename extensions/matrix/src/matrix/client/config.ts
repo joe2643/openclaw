@@ -9,7 +9,11 @@ import {
 } from "openclaw/plugin-sdk/matrix";
 import { getMatrixRuntime } from "../../runtime.js";
 import type { CoreConfig } from "../../types.js";
-import { findMatrixAccountConfig, resolveMatrixBaseConfig } from "../account-config.js";
+import {
+  findMatrixAccountConfig,
+  resolveMatrixBaseConfig,
+  listNormalizedMatrixAccountIds,
+} from "../account-config.js";
 import { resolveMatrixConfigFieldPath } from "../config-update.js";
 import { MatrixClient } from "../sdk.js";
 import { ensureMatrixSdkLoggingConfigured } from "./logging.js";
@@ -88,10 +92,13 @@ function resolveGlobalMatrixEnvConfig(env: NodeJS.ProcessEnv): MatrixEnvConfig {
 }
 
 function resolveMatrixEnvAccountToken(accountId: string): string {
-  return normalizeAccountId(accountId)
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toUpperCase();
+  return Array.from(normalizeAccountId(accountId))
+    .map((char) =>
+      /[a-z0-9]/.test(char)
+        ? char.toUpperCase()
+        : `_X${char.codePointAt(0)?.toString(16).toUpperCase() ?? "00"}_`,
+    )
+    .join("");
 }
 
 export function getMatrixScopedEnvVarNames(accountId: string): {
@@ -126,6 +133,18 @@ export function resolveScopedMatrixEnvConfig(
     deviceId: clean(env[keys.deviceId], keys.deviceId) || undefined,
     deviceName: clean(env[keys.deviceName], keys.deviceName) || undefined,
   };
+}
+
+function hasScopedMatrixEnvConfig(accountId: string, env: NodeJS.ProcessEnv): boolean {
+  const scoped = resolveScopedMatrixEnvConfig(accountId, env);
+  return Boolean(
+    scoped.homeserver ||
+    scoped.userId ||
+    scoped.accessToken ||
+    scoped.password ||
+    scoped.deviceId ||
+    scoped.deviceName,
+  );
 }
 
 export function hasReadyMatrixEnvAuth(config: {
@@ -278,14 +297,13 @@ export function resolveMatrixConfigForAccount(
       scopedEnvValue: scopedEnv.password,
       globalEnvValue: globalEnv.password,
     }) || undefined;
-  const deviceId =
-    resolveMatrixStringField({
-      matrix,
-      field: "deviceId",
-      accountValue: accountField("deviceId"),
-      scopedEnvValue: scopedEnv.deviceId,
-      globalEnvValue: globalEnv.deviceId,
-    }) || undefined;
+  const deviceIdSource =
+    accountField("deviceId") ||
+    scopedEnv.deviceId ||
+    (normalizedAccountId === DEFAULT_ACCOUNT_ID
+      ? readMatrixBaseConfigField(matrix, "deviceId") || globalEnv.deviceId || ""
+      : "");
+  const deviceId = deviceIdSource || undefined;
   const deviceName =
     resolveMatrixStringField({
       matrix,
@@ -340,6 +358,16 @@ export function resolveMatrixAuthContext(params?: {
   if (!effectiveAccountId) {
     throw new Error(
       'Multiple Matrix accounts are configured and channels.matrix.defaultAccount is not set. Set "channels.matrix.defaultAccount" to the intended account or pass --account <id>.',
+    );
+  }
+  if (
+    explicitAccountId &&
+    explicitAccountId !== DEFAULT_ACCOUNT_ID &&
+    !listNormalizedMatrixAccountIds(cfg).includes(explicitAccountId) &&
+    !hasScopedMatrixEnvConfig(explicitAccountId, env)
+  ) {
+    throw new Error(
+      `Matrix account "${explicitAccountId}" is not configured. Add channels.matrix.accounts.${explicitAccountId} or define scoped MATRIX_${resolveMatrixEnvAccountToken(explicitAccountId)}_* variables.`,
     );
   }
   const resolved = resolveMatrixConfigForAccount(cfg, effectiveAccountId, env);

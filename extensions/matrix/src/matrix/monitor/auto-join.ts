@@ -46,12 +46,24 @@ export function registerMatrixAutoJoin(params: {
     return resolved;
   };
 
+  const resolveAllowedAliasRoomIds = async (): Promise<string[]> => {
+    const resolved = await Promise.all(
+      allowedAliases.map(async (alias) => {
+        try {
+          return await resolveAllowedAliasRoomId(alias);
+        } catch (err) {
+          runtime.error?.(`matrix: failed resolving allowlisted alias ${alias}: ${String(err)}`);
+          return null;
+        }
+      }),
+    );
+    return resolved.filter((roomId): roomId is string => Boolean(roomId));
+  };
+
   // Handle invites directly so both "always" and "allowlist" modes share the same path.
   client.on("room.invite", async (roomId: string, _inviteEvent: unknown) => {
     if (autoJoin === "allowlist") {
-      const allowedAliasRoomIds = await Promise.all(
-        allowedAliases.map(async (alias) => await resolveAllowedAliasRoomId(alias)),
-      );
+      const allowedAliasRoomIds = await resolveAllowedAliasRoomIds();
       const allowed =
         autoJoinAllowlist.has("*") ||
         allowedRoomIds.has(roomId) ||
