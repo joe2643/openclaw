@@ -1,4 +1,8 @@
-import { shouldMoveSingleAccountChannelKey } from "../channels/plugins/setup-helpers.js";
+import {
+  MATRIX_SHARED_MULTI_ACCOUNT_DEFAULT_KEYS,
+  resolveSingleAccountKeysToMove,
+  resolveSingleAccountPromotionTarget,
+} from "../channels/plugins/setup-helpers.js";
 import type { OpenClawConfig } from "../config/config.js";
 import {
   formatSlackStreamingBooleanMigrationMessage,
@@ -316,20 +320,23 @@ export function normalizeCompatibilityConfigValues(cfg: OpenClawConfig): {
         continue;
       }
 
-      const keysToMove = Object.entries(rawChannel)
-        .filter(
-          ([key, value]) =>
-            key !== "accounts" &&
-            key !== "enabled" &&
-            value !== undefined &&
-            shouldMoveSingleAccountChannelKey({ channelKey: channelId, key }),
-        )
-        .map(([key]) => key);
+      const keysToMove = resolveSingleAccountKeysToMove({
+        channelKey: channelId,
+        channel: rawChannel,
+      });
       if (keysToMove.length === 0) {
         continue;
       }
 
-      const defaultAccount: Record<string, unknown> = {};
+      const targetAccountId = resolveSingleAccountPromotionTarget({
+        channelKey: channelId,
+        channel: rawChannel,
+      });
+      const defaultAccount: Record<string, unknown> = {
+        ...(typeof rawAccounts[targetAccountId] === "object" && rawAccounts[targetAccountId]
+          ? structuredClone(rawAccounts[targetAccountId] as Record<string, unknown>)
+          : {}),
+      };
       for (const key of keysToMove) {
         const value = rawChannel[key];
         defaultAccount[key] = value && typeof value === "object" ? structuredClone(value) : value;
@@ -342,13 +349,13 @@ export function normalizeCompatibilityConfigValues(cfg: OpenClawConfig): {
       }
       nextChannel.accounts = {
         ...rawAccounts,
-        [DEFAULT_ACCOUNT_ID]: defaultAccount,
+        [targetAccountId]: defaultAccount,
       };
 
       nextChannels[channelId] = nextChannel;
       channelsChanged = true;
       changes.push(
-        `Moved channels.${channelId} single-account top-level values into channels.${channelId}.accounts.default.`,
+        `Moved channels.${channelId} single-account top-level values into channels.${channelId}.accounts.${targetAccountId}.`,
       );
     }
 
@@ -365,6 +372,57 @@ export function normalizeCompatibilityConfigValues(cfg: OpenClawConfig): {
   normalizeProvider("slack");
   normalizeProvider("discord");
   seedMissingDefaultAccountsFromSingleAccountBase();
+
+  const repairSyntheticMatrixDefaultAccount = () => {
+    const rawMatrix = next.channels?.matrix;
+    if (!isRecord(rawMatrix)) {
+      return;
+    }
+    const rawAccounts = rawMatrix.accounts;
+    if (!isRecord(rawAccounts)) {
+      return;
+    }
+    const syntheticDefault = rawAccounts[DEFAULT_ACCOUNT_ID];
+    if (!isRecord(syntheticDefault)) {
+      return;
+    }
+    const namedDefaultAccount =
+      typeof rawMatrix.defaultAccount === "string" ? rawMatrix.defaultAccount.trim() : "";
+    if (!namedDefaultAccount || namedDefaultAccount.toLowerCase() === DEFAULT_ACCOUNT_ID) {
+      return;
+    }
+    const defaultKeys = Object.keys(syntheticDefault);
+    if (
+      defaultKeys.length === 0 ||
+      defaultKeys.some((key) => !MATRIX_SHARED_MULTI_ACCOUNT_DEFAULT_KEYS.has(key))
+    ) {
+      return;
+    }
+
+    const nextMatrix: Record<string, unknown> = { ...rawMatrix };
+    for (const key of defaultKeys) {
+      if (nextMatrix[key] === undefined) {
+        const value = syntheticDefault[key];
+        nextMatrix[key] = value && typeof value === "object" ? structuredClone(value) : value;
+      }
+    }
+    const nextAccounts = { ...rawAccounts };
+    delete nextAccounts[DEFAULT_ACCOUNT_ID];
+    nextMatrix.accounts = nextAccounts;
+
+    next = {
+      ...next,
+      channels: {
+        ...next.channels,
+        matrix: nextMatrix as OpenClawConfig["channels"]["matrix"],
+      },
+    };
+    changes.push(
+      "Moved shared Matrix defaults from channels.matrix.accounts.default back to channels.matrix.*.",
+    );
+  };
+
+  repairSyntheticMatrixDefaultAccount();
 
   const normalizeBrowserSsrFPolicyAlias = () => {
     const rawBrowser = next.browser;

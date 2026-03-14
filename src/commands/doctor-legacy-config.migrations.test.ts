@@ -263,6 +263,64 @@ describe("normalizeCompatibilityConfigValues", () => {
     );
   });
 
+  it("does not create matrix.accounts.default for shared top-level defaults", () => {
+    const res = normalizeCompatibilityConfigValues({
+      channels: {
+        matrix: {
+          defaultAccount: "main",
+          dm: { policy: "pairing" },
+          accounts: {
+            main: {
+              homeserver: "https://matrix.example.org",
+              userId: "@main:example.org",
+              password: "main-password",
+            },
+            poe: {
+              homeserver: "https://matrix.example.org",
+              userId: "@poe:example.org",
+              password: "poe-password",
+            },
+          },
+        },
+      },
+    });
+
+    expect(res.config.channels?.matrix?.dm).toEqual({ policy: "pairing" });
+    expect(res.config.channels?.matrix?.accounts?.default).toBeUndefined();
+    expect(res.changes).toEqual([]);
+  });
+
+  it("repairs synthetic matrix.accounts.default shared defaults back to top-level", () => {
+    const res = normalizeCompatibilityConfigValues({
+      channels: {
+        matrix: {
+          defaultAccount: "main",
+          accounts: {
+            main: {
+              homeserver: "https://matrix.example.org",
+              userId: "@main:example.org",
+              password: "main-password",
+            },
+            poe: {
+              homeserver: "https://matrix.example.org",
+              userId: "@poe:example.org",
+              password: "poe-password",
+            },
+            default: {
+              dm: { policy: "pairing" },
+            },
+          },
+        },
+      },
+    });
+
+    expect(res.config.channels?.matrix?.dm).toEqual({ policy: "pairing" });
+    expect(res.config.channels?.matrix?.accounts?.default).toBeUndefined();
+    expect(res.changes).toContain(
+      "Moved shared Matrix defaults from channels.matrix.accounts.default back to channels.matrix.*.",
+    );
+  });
+
   it("migrates browser ssrfPolicy allowPrivateNetwork to dangerouslyAllowPrivateNetwork", () => {
     const res = normalizeCompatibilityConfigValues({
       browser: {
