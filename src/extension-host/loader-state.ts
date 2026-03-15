@@ -1,22 +1,55 @@
-import type { PluginRecord, PluginRegistry } from "../plugins/registry.js";
+import type {
+  PluginRecord,
+  PluginRecordLifecycleState,
+  PluginRegistry,
+} from "../plugins/registry.js";
+
+const EXTENSION_HOST_LIFECYCLE_STATUS_MAP: Record<
+  PluginRecordLifecycleState,
+  PluginRecord["status"]
+> = {
+  prepared: "loaded",
+  disabled: "disabled",
+  validated: "loaded",
+  registered: "loaded",
+  error: "error",
+};
+
+export function setExtensionHostPluginRecordLifecycleState(
+  record: PluginRecord,
+  nextState: PluginRecordLifecycleState,
+  opts?: { error?: string },
+): PluginRecord {
+  record.lifecycleState = nextState;
+  record.status = EXTENSION_HOST_LIFECYCLE_STATUS_MAP[nextState];
+
+  if (nextState === "disabled") {
+    record.enabled = false;
+    record.error = opts?.error;
+    return record;
+  }
+  if (nextState === "error") {
+    record.error = opts?.error;
+    return record;
+  }
+  if (opts?.error === undefined) {
+    delete record.error;
+  }
+  return record;
+}
 
 export function setExtensionHostPluginRecordDisabled(
   record: PluginRecord,
   reason?: string,
 ): PluginRecord {
-  record.enabled = false;
-  record.status = "disabled";
-  record.error = reason;
-  return record;
+  return setExtensionHostPluginRecordLifecycleState(record, "disabled", { error: reason });
 }
 
 export function setExtensionHostPluginRecordError(
   record: PluginRecord,
   message: string,
 ): PluginRecord {
-  record.status = "error";
-  record.error = message;
-  return record;
+  return setExtensionHostPluginRecordLifecycleState(record, "error", { error: message });
 }
 
 export function appendExtensionHostPluginRecord(params: {

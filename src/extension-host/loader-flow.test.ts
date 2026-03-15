@@ -159,6 +159,7 @@ describe("extension host loader flow", () => {
     expect(registry.plugins).toHaveLength(1);
     expect(registry.plugins[0]?.id).toBe("demo");
     expect(registry.plugins[0]?.status).toBe("loaded");
+    expect(registry.plugins[0]?.lifecycleState).toBe("validated");
   });
 
   it("records import failures through the existing plugin error path", () => {
@@ -201,6 +202,7 @@ describe("extension host loader flow", () => {
 
     expect(registry.plugins).toHaveLength(1);
     expect(registry.plugins[0]?.status).toBe("error");
+    expect(registry.plugins[0]?.lifecycleState).toBe("error");
     expect(registry.diagnostics[0]?.message).toContain("failed to load plugin");
   });
 });

@@ -6,6 +6,10 @@ import { isPathInside, safeStatSync } from "../plugins/path-safety.js";
 import type { PluginRecord, PluginRegistry } from "../plugins/registry.js";
 import type { PluginDiagnostic, PluginLogger } from "../plugins/types.js";
 import { resolveUserPath } from "../utils.js";
+import {
+  appendExtensionHostPluginRecord,
+  setExtensionHostPluginRecordLifecycleState,
+} from "./loader-state.js";
 
 function safeRealpathOrResolve(value: string): string {
   try {
@@ -41,7 +45,7 @@ export function createExtensionHostPluginRecord(params: {
   enabled: boolean;
   configSchema: boolean;
 }): PluginRecord {
-  return {
+  const record: PluginRecord = {
     id: params.id,
     name: params.name ?? params.id,
     description: params.description,
@@ -65,6 +69,10 @@ export function createExtensionHostPluginRecord(params: {
     configUiHints: undefined,
     configJsonSchema: undefined,
   };
+  return setExtensionHostPluginRecordLifecycleState(
+    record,
+    params.enabled ? "prepared" : "disabled",
+  );
 }
 
 export function recordExtensionHostPluginError(params: {
@@ -85,10 +93,14 @@ export function recordExtensionHostPluginError(params: {
       : null;
   const displayError = deprecatedApiHint ? `${deprecatedApiHint} (${errorText})` : errorText;
   params.logger.error(`${params.logPrefix}${displayError}`);
-  params.record.status = "error";
-  params.record.error = displayError;
-  params.registry.plugins.push(params.record);
-  params.seenIds.set(params.pluginId, params.origin);
+  setExtensionHostPluginRecordLifecycleState(params.record, "error", { error: displayError });
+  appendExtensionHostPluginRecord({
+    registry: params.registry,
+    record: params.record,
+    seenIds: params.seenIds,
+    pluginId: params.pluginId,
+    origin: params.origin,
+  });
   params.registry.diagnostics.push({
     level: "error",
     pluginId: params.record.id,

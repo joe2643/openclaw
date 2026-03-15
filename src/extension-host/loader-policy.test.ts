@@ -43,6 +43,7 @@ describe("extension host loader policy", () => {
       origin: "workspace",
       enabled: true,
       status: "loaded",
+      lifecycleState: "prepared",
       configSchema: true,
     });
   });

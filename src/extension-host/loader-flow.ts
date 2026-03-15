@@ -16,6 +16,7 @@ import {
 } from "./loader-runtime.js";
 import {
   appendExtensionHostPluginRecord,
+  setExtensionHostPluginRecordLifecycleState,
   setExtensionHostPluginRecordDisabled,
   setExtensionHostPluginRecordError,
 } from "./loader-state.js";
@@ -214,6 +215,7 @@ export function processExtensionHostPluginCandidate(params: {
   }
 
   if (loadedPlan.kind === "validate-only") {
+    setExtensionHostPluginRecordLifecycleState(record, "validated");
     appendExtensionHostPluginRecord({
       registry: params.registry,
       record,
@@ -263,6 +265,7 @@ export function processExtensionHostPluginCandidate(params: {
     };
   }
 
+  setExtensionHostPluginRecordLifecycleState(record, "registered");
   appendExtensionHostPluginRecord({
     registry: params.registry,
     record,

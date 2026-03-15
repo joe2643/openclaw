@@ -3,6 +3,7 @@ import type { PluginRegistry } from "../plugins/registry.js";
 import { createExtensionHostPluginRecord } from "./loader-policy.js";
 import {
   appendExtensionHostPluginRecord,
+  setExtensionHostPluginRecordLifecycleState,
   setExtensionHostPluginRecordDisabled,
   setExtensionHostPluginRecordError,
 } from "./loader-state.js";
@@ -25,6 +26,25 @@ function createRegistry(): PluginRegistry {
 }
 
 describe("extension host loader state", () => {
+  it("maps explicit lifecycle states onto compatibility status values", () => {
+    const record = createExtensionHostPluginRecord({
+      id: "demo",
+      source: "/plugins/demo.js",
+      origin: "workspace",
+      enabled: true,
+      configSchema: true,
+    });
+
+    expect(setExtensionHostPluginRecordLifecycleState(record, "validated")).toMatchObject({
+      lifecycleState: "validated",
+      status: "loaded",
+    });
+    expect(setExtensionHostPluginRecordLifecycleState(record, "registered")).toMatchObject({
+      lifecycleState: "registered",
+      status: "loaded",
+    });
+  });
+
   it("marks plugin records disabled", () => {
     const record = createExtensionHostPluginRecord({
       id: "demo",
@@ -37,6 +57,7 @@ describe("extension host loader state", () => {
     expect(setExtensionHostPluginRecordDisabled(record, "disabled by policy")).toMatchObject({
       enabled: false,
       status: "disabled",
+      lifecycleState: "disabled",
       error: "disabled by policy",
     });
   });
@@ -52,6 +73,7 @@ describe("extension host loader state", () => {
 
     expect(setExtensionHostPluginRecordError(record, "failed to load")).toMatchObject({
       status: "error",
+      lifecycleState: "error",
       error: "failed to load",
     });
   });
