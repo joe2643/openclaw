@@ -303,7 +303,7 @@ jobs:
         run: pnpm lint:ui:no-raw-window-open
 
   build-smoke:
-    name: "build-smoke"
+    name: "startup-memory"
     needs: [docs-scope, changed-scope]
     if: needs.docs-scope.outputs.docs_only != 'true' && needs.changed-scope.outputs.run_node == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2404
