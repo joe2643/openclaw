@@ -28,6 +28,7 @@ import {
 import {
   createCodexDefaultTransportWrapper,
   createCodexNativeWebSearchWrapper,
+  createOpenAIAttributionHeadersWrapper,
   createOpenAIDefaultTransportWrapper,
   createOpenAIFastModeWrapper,
   createOpenAIResponsesContextManagementWrapper,
@@ -266,7 +267,7 @@ function createParallelToolCallsWrapper(
 
 /**
  * Apply extra params (like temperature) to an agent's streamFn.
- * Also adds OpenRouter app attribution headers when using the OpenRouter provider.
+ * Also applies verified provider-specific request wrappers, such as OpenRouter attribution.
  *
  * @internal Exported for testing
  */
@@ -306,12 +307,15 @@ export function applyExtraParamsToAgent(
       },
     }) ?? merged;
 
-  if (provider === "openai-codex") {
-    // Default Codex to WebSocket-first when nothing else specifies transport.
-    agent.streamFn = createCodexDefaultTransportWrapper(agent.streamFn);
-  } else if (provider === "openai") {
-    // Default OpenAI Responses to WebSocket-first with transparent SSE fallback.
-    agent.streamFn = createOpenAIDefaultTransportWrapper(agent.streamFn);
+  if (provider === "openai" || provider === "openai-codex") {
+    if (provider === "openai") {
+      // Default OpenAI Responses to WebSocket-first with transparent SSE fallback.
+      agent.streamFn = createOpenAIDefaultTransportWrapper(agent.streamFn);
+    } else {
+      // Default Codex to WebSocket-first when nothing else specifies transport.
+      agent.streamFn = createCodexDefaultTransportWrapper(agent.streamFn);
+    }
+    agent.streamFn = createOpenAIAttributionHeadersWrapper(agent.streamFn);
   }
   const wrappedStreamFn = createStreamFnWithExtraParams(
     agent.streamFn,

@@ -1,8 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearRuntimeAuthProfileStoreSnapshots } from "../../agents/auth-profiles/store.js";
 import { applyAuthChoiceLoadedPluginProvider } from "../../commands/auth-choice.apply.plugin-provider.js";
-import { resolvePreferredProviderForAuthChoice } from "../../commands/auth-choice.preferred-provider.js";
-import type { AuthChoice } from "../../commands/onboard-types.js";
 import {
   createAuthTestLifecycle,
   createExitThrowingRuntime,
@@ -13,6 +11,7 @@ import {
 } from "../../commands/test-wizard-helpers.js";
 import { createCapturedPluginRegistration } from "../../test-utils/plugin-registration.js";
 import type { OpenClawPluginApi, ProviderPlugin } from "../types.js";
+import { providerContractRegistry } from "./registry.js";
 
 type ResolvePluginProviders =
   typeof import("../../commands/auth-choice.apply.plugin-provider.runtime.js").resolvePluginProviders;
@@ -28,6 +27,7 @@ const resolveProviderPluginChoiceMock = vi.hoisted(() => vi.fn<ResolveProviderPl
 const runProviderModelSelectedHookMock = vi.hoisted(() =>
   vi.fn<RunProviderModelSelectedHook>(async () => {}),
 );
+const resolvePreferredProviderPluginProvidersMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../../extensions/qwen-portal-auth/oauth.js", () => ({
   loginQwenPortalOAuth: loginQwenPortalOAuthMock,
@@ -42,6 +42,18 @@ vi.mock("../../commands/auth-choice.apply.plugin-provider.runtime.js", () => ({
   resolveProviderPluginChoice: resolveProviderPluginChoiceMock,
   runProviderModelSelectedHook: runProviderModelSelectedHookMock,
 }));
+
+vi.mock("../../plugins/providers.js", async () => {
+  const actual = await vi.importActual<object>("../../plugins/providers.js");
+  return {
+    ...actual,
+    resolvePluginProviders: (...args: unknown[]) =>
+      resolvePreferredProviderPluginProvidersMock(...args),
+  };
+});
+
+const { resolvePreferredProviderForAuthChoice } =
+  await import("../../commands/auth-choice.preferred-provider.js");
 
 type StoredAuthProfile = {
   type?: string;
@@ -87,6 +99,15 @@ describe("provider auth-choice contract", () => {
     lifecycle.setStateDir(env.stateDir);
   }
 
+  beforeEach(() => {
+    resolvePreferredProviderPluginProvidersMock.mockReset();
+    resolvePreferredProviderPluginProvidersMock.mockReturnValue([
+      ...new Map(
+        providerContractRegistry.map((entry) => [entry.provider.id, entry.provider]),
+      ).values(),
+    ]);
+  });
+
   afterEach(async () => {
     loginQwenPortalOAuthMock.mockReset();
     githubCopilotLoginCommandMock.mockReset();
@@ -107,7 +128,7 @@ describe("provider auth-choice contract", () => {
       { authChoice: "minimax-global-oauth" as const, expectedProvider: "minimax-portal" },
       { authChoice: "modelstudio-api-key" as const, expectedProvider: "modelstudio" },
       { authChoice: "ollama" as const, expectedProvider: "ollama" },
-      { authChoice: "unknown" as AuthChoice, expectedProvider: undefined },
+      { authChoice: "unknown", expectedProvider: undefined },
     ] as const;
 
     for (const scenario of scenarios) {
