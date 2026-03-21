@@ -1,4 +1,5 @@
 import { loginOpenAICodex, type OAuthCredentials } from "@mariozechner/pi-ai/oauth";
+import { resolveProxyFetchFromEnv } from "../infra/net/proxy-fetch.js";
 import type { RuntimeEnv } from "../runtime.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 import { createVpsAwareOAuthHandlers } from "./provider-oauth-flow.js";
@@ -6,6 +7,25 @@ import {
   formatOpenAIOAuthTlsPreflightFix,
   runOpenAIOAuthTlsPreflight,
 } from "./provider-openai-codex-oauth-tls.js";
+
+/**
+ * Temporarily replace globalThis.fetch with a proxy-aware variant for the
+ * duration of `fn`. The pi-ai library uses bare `fetch` internally and does
+ * not accept a custom fetch parameter, so this is the only injection point.
+ * The original fetch is restored in a finally block.
+ */
+async function withProxyFetch<T>(proxyFetch: typeof fetch, fn: () => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = proxyFetch;
+  try {
+    return await fn();
+  } finally {
+    // Only restore if we still own the slot (avoid clobbering a concurrent override)
+    if (globalThis.fetch === proxyFetch) {
+      globalThis.fetch = originalFetch;
+    }
+  }
+}
 
 export async function loginOpenAICodexOAuth(params: {
   prompter: WizardPrompter;
@@ -15,7 +35,10 @@ export async function loginOpenAICodexOAuth(params: {
   localBrowserMessage?: string;
 }): Promise<OAuthCredentials | null> {
   const { prompter, runtime, isRemote, openUrl, localBrowserMessage } = params;
-  const preflight = await runOpenAIOAuthTlsPreflight();
+  const proxyFetch = resolveProxyFetchFromEnv();
+  const preflight = await runOpenAIOAuthTlsPreflight({
+    fetchImpl: proxyFetch,
+  });
   if (!preflight.ok && preflight.kind === "tls-cert") {
     const hint = formatOpenAIOAuthTlsPreflightFix(preflight);
     runtime.error(hint);
@@ -49,11 +72,15 @@ export async function loginOpenAICodexOAuth(params: {
       localBrowserMessage: localBrowserMessage ?? "Complete sign-in in browser…",
     });
 
-    const creds = await loginOpenAICodex({
-      onAuth: baseOnAuth,
-      onPrompt,
-      onProgress: (msg: string) => spin.update(msg),
-    });
+    const doLogin = () =>
+      loginOpenAICodex({
+        onAuth: baseOnAuth,
+        onPrompt,
+        onProgress: (msg: string) => spin.update(msg),
+      });
+
+    // pi-ai uses bare fetch internally; patch globalThis.fetch when a proxy is configured
+    const creds = proxyFetch ? await withProxyFetch(proxyFetch, doLogin) : await doLogin();
     spin.stop("OpenAI OAuth complete");
     return creds ?? null;
   } catch (err) {
