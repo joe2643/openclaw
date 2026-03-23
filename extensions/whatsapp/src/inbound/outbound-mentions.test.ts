@@ -113,6 +113,10 @@ describe("extractOutboundMentions", () => {
     expect(extractOutboundMentions("ask @+1234567890.")).toEqual(["1234567890@s.whatsapp.net"]);
   });
 
+  it("does not create false mention when code span removal merges tokens", () => {
+    expect(extractOutboundMentions("x`y`@1234567890")).toEqual([]);
+  });
+
   it("matches mention followed by punctuation", () => {
     expect(extractOutboundMentions("hey @+1234567890, what's up?")).toEqual([
       "1234567890@s.whatsapp.net",
