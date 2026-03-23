@@ -6,7 +6,7 @@ import { saveMediaBuffer } from "openclaw/plugin-sdk/media-runtime";
 import { logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { getChildLogger } from "openclaw/plugin-sdk/text-runtime";
-import { resolveJidToE164 } from "openclaw/plugin-sdk/text-runtime";
+import { jidToE164, normalizeE164, resolveJidToE164 } from "openclaw/plugin-sdk/text-runtime";
 import { readWebSelfIdentity } from "../auth-store.js";
 import { getPrimaryIdentityId, resolveComparableIdentity } from "../identity.js";
 import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
@@ -25,6 +25,7 @@ import {
 } from "./extract.js";
 import { attachEmitterListener, closeInboundMonitorSocket } from "./lifecycle.js";
 import { downloadInboundMedia } from "./media.js";
+import { extractOutboundMentions } from "./outbound-mentions.js";
 import { createWebSendApi } from "./send-api.js";
 import type { WebInboundMessage, WebListenerCloseReason } from "./types.js";
 
@@ -137,7 +138,12 @@ export async function monitorWebInbox(options: {
   });
   const groupMetaCache = new Map<
     string,
-    { subject?: string; participants?: string[]; expires: number }
+    {
+      subject?: string;
+      participants?: string[];
+      participantJidMap?: Map<string, string>;
+      expires: number;
+    }
   >();
   const GROUP_META_TTL_MS = 5 * 60 * 1000; // 5 minutes
   const lidLookup = sock.signalRepository?.lidMapping;
@@ -173,18 +179,27 @@ export async function monitorWebInbox(options: {
     }
     try {
       const meta = await sock.groupMetadata(jid);
+      const participantJidMap = new Map<string, string>();
       const participants =
         (
           await Promise.all(
             meta.participants?.map(async (p) => {
               const mapped = await resolveInboundJid(p.id);
-              return mapped ?? p.id;
+              const resolved = mapped ?? p.id;
+              // Map normalized display number → original JID so outbound mentions
+              // use the correct JID type (phone @s.whatsapp.net vs LID @lid).
+              const normalized = normalizeE164(resolved);
+              if (normalized) {
+                participantJidMap.set(normalized, p.id);
+              }
+              return resolved;
             }) ?? [],
           )
         ).filter(Boolean) ?? [];
       const entry = {
         subject: meta.subject,
         participants,
+        participantJidMap,
         expires: Date.now() + GROUP_META_TTL_MS,
       };
       groupMetaCache.set(jid, entry);
@@ -379,6 +394,9 @@ export async function monitorWebInbox(options: {
     enriched: EnrichedInboundMessage,
   ) => {
     const chatJid = inbound.remoteJid;
+    // Retrieve the participant JID map from the cached group metadata so
+    // outbound @mentions resolve to the correct JID type (phone vs LID).
+    const groupJidMap = inbound.group ? groupMetaCache.get(chatJid)?.participantJidMap : undefined;
     const sendComposing = async () => {
       try {
         await sock.sendPresenceUpdate("composing", chatJid);
@@ -387,10 +405,30 @@ export async function monitorWebInbox(options: {
       }
     };
     const reply = async (text: string) => {
-      await sendTrackedMessage(chatJid, { text });
+      const { jids: mentions, text: rewrittenText } = inbound.access.isSelfChat
+        ? { jids: [] as string[], text }
+        : extractOutboundMentions(text, groupJidMap);
+      await sendTrackedMessage(chatJid, {
+        text: rewrittenText,
+        ...(mentions.length > 0 ? { mentions } : {}),
+      });
     };
     const sendMedia = async (payload: AnyMessageContent) => {
-      await sendTrackedMessage(chatJid, payload);
+      const caption = "caption" in payload ? (payload as { caption?: string }).caption : undefined;
+      const { jids: mentions, text: rewrittenCaption } =
+        caption && !inbound.access.isSelfChat
+          ? extractOutboundMentions(caption, groupJidMap)
+          : { jids: [] as string[], text: caption ?? "" };
+      const updatedPayload =
+        rewrittenCaption !== caption && caption
+          ? { ...payload, caption: rewrittenCaption }
+          : payload;
+      await sendTrackedMessage(
+        chatJid,
+        mentions.length > 0
+          ? ({ ...updatedPayload, mentions } as AnyMessageContent)
+          : updatedPayload,
+      );
     };
     const timestamp = inbound.messageTimestampMs;
     const mentionedJids = extractMentionedJids(msg.message as proto.IMessage | undefined);
