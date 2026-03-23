@@ -24,8 +24,8 @@ function resolveOutboundMessageId(result: unknown): string {
 // which is incorrect for LID-based participants. The auto-reply path is unaffected.
 function mentionsSpread(text: string | undefined): { mentions: string[] } | Record<string, never> {
   if (!text) return {};
-  const mentions = extractOutboundMentions(text);
-  return mentions.length > 0 ? { mentions } : {};
+  const { jids } = extractOutboundMentions(text);
+  return jids.length > 0 ? { mentions: jids } : {};
 }
 
 export function createWebSendApi(params: {

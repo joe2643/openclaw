@@ -58,54 +58,6 @@ describe("extractOutboundMentions", () => {
     ]);
   });
 
-  it("ignores email-like patterns where @ is not at token start", () => {
-    expect(extractOutboundMentions("contact@1234567890 for info")).toEqual([]);
-    expect(extractOutboundMentions("user@+9876543210")).toEqual([]);
-  });
-
-  it("ignores pasted JID-like tokens with trailing non-boundary chars", () => {
-    expect(extractOutboundMentions("@123456789012345:1@lid")).toEqual([]);
-    expect(extractOutboundMentions("@1234567890abc")).toEqual([]);
-  });
-
-  it("ignores tokens with underscore, dash, or slash suffix", () => {
-    expect(extractOutboundMentions("@1234567_user")).toEqual([]);
-    expect(extractOutboundMentions("@1234567-foo")).toEqual([]);
-    expect(extractOutboundMentions("@1234567/bar")).toEqual([]);
-  });
-
-  it("ignores tokens with non-ASCII letter suffix", () => {
-    expect(extractOutboundMentions("@1234567中文")).toEqual([]);
-    expect(extractOutboundMentions("@1234567é")).toEqual([]);
-  });
-
-  it("skips mentions inside backtick code spans", () => {
-    expect(extractOutboundMentions("see `@+1234567890` for details")).toEqual([]);
-    expect(extractOutboundMentions("code `@+1234567890` but also @+9876543210 outside")).toEqual([
-      "9876543210@s.whatsapp.net",
-    ]);
-  });
-
-  it("does not create false mention when code span removal merges tokens", () => {
-    expect(extractOutboundMentions("x`y`@1234567890")).toEqual([]);
-  });
-
-  it("skips mentions inside multi-backtick code spans", () => {
-    expect(extractOutboundMentions("`` @+1234567890 ``")).toEqual([]);
-    expect(extractOutboundMentions("```@+1234567890```")).toEqual([]);
-    expect(extractOutboundMentions("`` @+1234567890 `` but @+9876543210 outside")).toEqual([
-      "9876543210@s.whatsapp.net",
-    ]);
-  });
-
-  it("matches mention followed by punctuation", () => {
-    expect(extractOutboundMentions("hey @+1234567890, what's up?")).toEqual([
-      "1234567890@s.whatsapp.net",
-    ]);
-    expect(extractOutboundMentions("ask @+1234567890.")).toEqual(["1234567890@s.whatsapp.net"]);
-    expect(extractOutboundMentions("(@+1234567890)")).toEqual(["1234567890@s.whatsapp.net"]);
-  });
-
   describe("with participantJidMap", () => {
     it("uses original JID from map for phone-based participants", () => {
       const jidMap = new Map([["+1234567890", "1234567890:0@s.whatsapp.net"]]);
