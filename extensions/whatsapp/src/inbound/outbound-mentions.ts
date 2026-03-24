@@ -23,7 +23,7 @@ export function extractOutboundMentions(
   // into false mentions and content inside code spans is never matched.
   const cleaned = text.replace(/(`{1,3})[\s\S]*?\1/g, (m) => "_".repeat(m.length));
   const pattern =
-    /(?<=^|[\s({\[<,.!?:;>"'])@\+?(\d{7,25})(?![:\d@\p{L}\p{N}_\-/])(?!\.[\p{L}\d])/gu;
+    /(?<=^|[\s({\[<,.!?:;>"'])@\+?(\d{7,25})(?![\d@\p{L}\p{N}_\-/])(?!\.[\p{L}\d])(?!:\d)/gu;
   const jids = new Set<string>();
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(cleaned)) !== null) {

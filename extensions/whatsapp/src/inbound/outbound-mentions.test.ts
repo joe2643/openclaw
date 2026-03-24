@@ -137,6 +137,15 @@ describe("extractOutboundMentions", () => {
     expect(extractOutboundMentions("(@+1234567890)")).toEqual(["1234567890@s.whatsapp.net"]);
   });
 
+  it("matches colon-terminated mentions", () => {
+    expect(extractOutboundMentions("@+1234567890: please check")).toEqual([
+      "1234567890@s.whatsapp.net",
+    ]);
+    expect(extractOutboundMentions("@1234567890: what do you think?")).toEqual([
+      "1234567890@s.whatsapp.net",
+    ]);
+  });
+
   describe("with participantJidMap", () => {
     it("uses original JID from map for phone-based participants", () => {
       const jidMap = new Map([["+1234567890", "1234567890:0@s.whatsapp.net"]]);
