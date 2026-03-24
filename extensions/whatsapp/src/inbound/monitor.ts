@@ -374,7 +374,7 @@ export async function monitorWebInbox(options: {
       logVerbose(`Inbound media download failed: ${String(err)}`);
     }
 
-    // Download media from the quoted (reply-target) message, if any
+    // Download media from the quoted (reply-target) message, if any.
     let replyToMediaPath: string | undefined;
     let replyToMediaType: string | undefined;
     if (replyContext?.quotedMediaMessage) {
