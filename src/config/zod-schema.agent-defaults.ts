@@ -84,6 +84,7 @@ export const AgentDefaultsSchema = z
           })
           .strict()
           .optional(),
+        cacheMedia: z.boolean().optional(),
       })
       .strict()
       .optional(),
