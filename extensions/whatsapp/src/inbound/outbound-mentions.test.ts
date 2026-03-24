@@ -113,6 +113,14 @@ describe("extractOutboundMentions", () => {
     expect(extractOutboundMentions("ask @+1234567890.")).toEqual(["1234567890@s.whatsapp.net"]);
   });
 
+  it("matches mention preceded by punctuation (comma, period, exclamation)", () => {
+    expect(extractOutboundMentions("Great,@+1234567890 please review")).toEqual([
+      "1234567890@s.whatsapp.net",
+    ]);
+    expect(extractOutboundMentions("Done!@+1234567890")).toEqual(["1234567890@s.whatsapp.net"]);
+    expect(extractOutboundMentions("see:@+1234567890")).toEqual(["1234567890@s.whatsapp.net"]);
+  });
+
   it("matches mention followed by punctuation", () => {
     expect(extractOutboundMentions("hey @+1234567890, what's up?")).toEqual([
       "1234567890@s.whatsapp.net",
