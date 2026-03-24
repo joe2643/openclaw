@@ -42,6 +42,7 @@ export type SignalDataMessage = {
     author?: string | null;
     authorUuid?: string | null;
     text?: string | null;
+    attachments?: Array<SignalAttachment> | null;
   } | null;
   reaction?: SignalReactionMessage | null;
 };
