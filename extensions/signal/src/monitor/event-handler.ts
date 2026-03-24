@@ -638,7 +638,35 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
       senderPeerId,
     });
     const mentionRegexes = buildMentionRegexes(deps.cfg, route.agentId);
-    const wasMentioned = isGroup && matchesMentionPatterns(messageText, mentionRegexes);
+    const regexMentioned = isGroup && matchesMentionPatterns(messageText, mentionRegexes);
+    // Signal provides structured mention metadata; check if the bot's
+    // account phone or UUID appears in the raw mentions array.
+    const signalMentions = dataMessage.mentions ?? [];
+    const hasAnySignalMention = isGroup && signalMentions.length > 0;
+    const signalMentionedBot =
+      isGroup &&
+      signalMentions.some((m) => {
+        const normalizedAccount = deps.account ? normalizeE164(deps.account) : undefined;
+        if (m.number && normalizedAccount && normalizeE164(m.number) === normalizedAccount) {
+          return true;
+        }
+        if (m.uuid && deps.accountUuid && m.uuid === deps.accountUuid) {
+          return true;
+        }
+        return false;
+      });
+    const wasMentioned = regexMentioned || signalMentionedBot;
+    // Treat a reply/quote to the bot's own message as an implicit mention.
+    const quoteAuthor = dataMessage.quote?.author ?? dataMessage.quote?.authorUuid;
+    const isReplyToBot =
+      isGroup &&
+      quoteAuthor != null &&
+      (() => {
+        const normalizedAccount = deps.account ? normalizeE164(deps.account) : undefined;
+        if (normalizedAccount && normalizeE164(quoteAuthor) === normalizedAccount) return true;
+        if (deps.accountUuid && quoteAuthor === deps.accountUuid) return true;
+        return false;
+      })();
     const requireMention =
       isGroup &&
       resolveChannelGroupRequireMention({
@@ -647,14 +675,15 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
         groupId,
         accountId: deps.accountId,
       });
-    const canDetectMention = mentionRegexes.length > 0;
+    // Signal can always detect mentions via structured data, even without regex patterns.
+    const canDetectMention = mentionRegexes.length > 0 || hasAnySignalMention || isReplyToBot;
     const mentionGate = resolveMentionGatingWithBypass({
       isGroup,
       requireMention: Boolean(requireMention),
       canDetectMention,
       wasMentioned,
-      implicitMention: false,
-      hasAnyMention: false,
+      implicitMention: isReplyToBot,
+      hasAnyMention: hasAnySignalMention,
       allowTextCommands: true,
       hasControlCommand: hasControlCommandInMessage,
       commandAuthorized,
