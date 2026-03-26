@@ -20,6 +20,8 @@ export type WhatsAppReplyContext = {
   id?: string;
   body: string;
   sender?: WhatsAppIdentity | null;
+  /** The raw quoted message proto, if the reply-target contains media */
+  quotedMediaMessage?: import("@whiskeysockets/baileys").proto.IMessage;
 };
 
 type LegacySenderLike = {
