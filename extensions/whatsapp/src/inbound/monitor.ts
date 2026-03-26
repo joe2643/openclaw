@@ -438,7 +438,9 @@ export async function monitorWebInbox(options: {
     const chatJid = inbound.remoteJid;
     // Retrieve the participant JID map from the cached group metadata so
     // outbound @mentions resolve to the correct JID type (phone vs LID).
-    const groupJidMap = inbound.group ? groupMetaCache.get(chatJid)?.participantJidMap : undefined;
+    const groupJidMap = inbound.group
+      ? (await getGroupMeta(chatJid))?.participantJidMap
+      : undefined;
     const sendComposing = async () => {
       try {
         await sock.sendPresenceUpdate("composing", chatJid);
