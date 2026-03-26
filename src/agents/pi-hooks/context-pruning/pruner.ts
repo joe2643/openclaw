@@ -541,7 +541,10 @@ export function pruneContextMessagesWithMediaCollection(params: {
     }
 
     // Collect any remaining media blocks from the original message if they weren't
-    // already collected during soft-trim
+    // already collected during soft-trim. Insert PRUNED_CONTEXT_IMAGE_MARKER into
+    // the cleared content so writePrunedMediaCaches can replace them with
+    // [media cached:] markers later.
+    const hardClearMediaMarkers: TextContent[] = [];
     if (!softTrimmedIndexes.has(i)) {
       const originalMsg = messages[i];
       if (originalMsg?.role === "toolResult") {
@@ -552,6 +555,7 @@ export function pruneContextMessagesWithMediaCollection(params: {
               data: block.data,
               mimeType: block.mimeType,
             });
+            hardClearMediaMarkers.push(asText(PRUNED_CONTEXT_IMAGE_MARKER));
           }
         }
       }
@@ -562,6 +566,9 @@ export function pruneContextMessagesWithMediaCollection(params: {
     const clearedContent: TextContent[] = [asText(settings.hardClear.placeholder)];
     if (cachedMarkers.length > 0) {
       clearedContent.push(...cachedMarkers);
+    }
+    if (hardClearMediaMarkers.length > 0) {
+      clearedContent.push(...hardClearMediaMarkers);
     }
     const cleared: ToolResultMessage = {
       ...msg,
