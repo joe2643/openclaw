@@ -27,9 +27,12 @@ export function extractOutboundMentions(
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(cleaned)) !== null) {
     const digits = match[1]!;
-    const normalized = `+${digits}`;
-    const originalJid = participantJidMap?.get(normalized);
-    jids.add(originalJid ?? `${digits}@s.whatsapp.net`);
+    // Always use phone-number JID format (digits@s.whatsapp.net) because
+    // WhatsApp requires the mention JID number to match the @number token
+    // in the message text. Using LID JIDs (e.g. 60065218322686@lid) when
+    // the text contains a phone number (e.g. @+85251159218) causes the
+    // mention to silently not render.
+    jids.add(`${digits}@s.whatsapp.net`);
   }
   return Array.from(jids);
 }
