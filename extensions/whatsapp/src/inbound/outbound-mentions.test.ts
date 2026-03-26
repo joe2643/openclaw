@@ -121,7 +121,9 @@ describe("extractOutboundMentions", () => {
     expect(extractOutboundMentions("Great,@+1234567890 please review").jids).toEqual([
       "1234567890@s.whatsapp.net",
     ]);
-    expect(extractOutboundMentions("Done!@+1234567890").jids).toEqual(["1234567890@s.whatsapp.net"]);
+    expect(extractOutboundMentions("Done!@+1234567890").jids).toEqual([
+      "1234567890@s.whatsapp.net",
+    ]);
     expect(extractOutboundMentions("see:@+1234567890").jids).toEqual(["1234567890@s.whatsapp.net"]);
   });
 

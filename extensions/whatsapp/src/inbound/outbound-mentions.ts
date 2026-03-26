@@ -38,8 +38,10 @@ export function extractOutboundMentions(
   const pattern =
     /(?<=^|[\s({\[<,.!?:;>"'])@\+?(\d{7,25})(?![\d@\p{L}\p{N}_\-/])(?!\.[\p{L}\d])(?!:\d)/gu;
   const jids = new Set<string>();
-  // Track text replacements: original token → replacement token
-  const replacements: Array<{ from: string; to: string }> = [];
+  // Track text replacements by position (offset in `cleaned`, which has same
+  // length as `text`). Position-based replacement avoids accidentally rewriting
+  // tokens inside code spans that happen to share the same text.
+  const replacements: Array<{ start: number; end: number; to: string }> = [];
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(cleaned)) !== null) {
     const fullToken = match[0]!; // e.g. "@+85251159218"
@@ -50,20 +52,26 @@ export function extractOutboundMentions(
       // LID participant: use LID JID and rewrite text token to match.
       // Baileys 7 rc9 uses "@lid" suffix; future versions may use "@hosted.lid".
       jids.add(originalJid);
-      const lidDigits = originalJid.replace(/@.*/, "");
+      // Strip device suffix (e.g. "123456:1@lid" → "123456") before building
+      // the replacement token — the `:N` qualifier is protocol-internal.
+      const lidDigits = originalJid.replace(/:[\d]+@/, "@").replace(/@.*/, "");
       const newToken = `@${lidDigits}`;
       if (fullToken !== newToken) {
-        replacements.push({ from: fullToken, to: newToken });
+        replacements.push({
+          start: match.index,
+          end: match.index + fullToken.length,
+          to: newToken,
+        });
       }
     } else {
       // Phone participant or no map: use phone JID
       jids.add(originalJid ?? `${digits}@s.whatsapp.net`);
     }
   }
-  // Apply text replacements
+  // Apply text replacements in reverse order so earlier offsets stay valid
   let updatedText = text;
-  for (const { from, to } of replacements) {
-    updatedText = updatedText.replaceAll(from, to);
+  for (const r of replacements.sort((a, b) => b.start - a.start)) {
+    updatedText = updatedText.slice(0, r.start) + r.to + updatedText.slice(r.end);
   }
   return { jids: Array.from(jids), text: updatedText };
 }
