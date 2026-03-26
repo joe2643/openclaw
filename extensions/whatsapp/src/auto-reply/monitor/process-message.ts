@@ -272,6 +272,14 @@ export async function processMessage(params: {
     channel: "whatsapp",
     accountId: params.route.accountId,
   });
+  const whatsappAccount = resolveWhatsAppAccount({
+    cfg: params.cfg,
+    accountId: params.msg.accountId,
+  });
+  const accountBlockStreamingEnabled =
+    typeof whatsappAccount.blockStreaming === "boolean"
+      ? whatsappAccount.blockStreaming
+      : params.cfg.agents?.defaults?.blockStreamingDefault === "on";
   const mediaLocalRoots = getAgentScopedMediaLocalRoots(params.cfg, params.route.agentId);
   let didLogHeartbeatStrip = false;
   let didSendReply = false;
@@ -412,10 +420,12 @@ export async function processMessage(params: {
         }
       },
       deliver: async (payload: ReplyPayload, info) => {
-        if (info.kind !== "final") {
-          // Only deliver final replies to external messaging channels (WhatsApp).
-          // Block (reasoning/thinking) and tool updates are meant for the internal
-          // web UI only; sending them here leaks chain-of-thought to end users.
+        if (info.kind === "tool") {
+          // Tool updates are internal-only; never expose to WhatsApp users.
+          return;
+        }
+        if (info.kind === "block" && !accountBlockStreamingEnabled) {
+          // When block streaming is off, only deliver final replies.
           return;
         }
         await deliverWebReply({
@@ -461,9 +471,7 @@ export async function processMessage(params: {
       onReplyStart: params.msg.sendComposing,
     },
     replyOptions: {
-      // WhatsApp delivery intentionally suppresses non-final payloads.
-      // Keep block streaming disabled so final replies are still produced.
-      disableBlockStreaming: true,
+      disableBlockStreaming: !accountBlockStreamingEnabled ? true : undefined,
       onModelSelected,
     },
   });
