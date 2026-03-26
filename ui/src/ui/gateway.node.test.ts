@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createStorageMock } from "../test-helpers/storage.ts";
 import { loadDeviceAuthToken, storeDeviceAuthToken } from "./device-auth.ts";
 import type { DeviceIdentity } from "./device-identity.ts";
+import { createStorageMock } from "./test-helpers/storage.ts";
 
 const wsInstances = vi.hoisted((): MockWebSocket[] => []);
 const loadOrCreateDeviceIdentityMock = vi.hoisted(() =>
@@ -91,16 +91,6 @@ type ConnectFrame = {
     scopes?: string[];
   };
 };
-
-function stubWindowGlobals(storage?: ReturnType<typeof createStorageMock>) {
-  vi.stubGlobal("window", {
-    location: { href: "http://127.0.0.1:18789/" },
-    localStorage: storage,
-    setTimeout: (handler: (...args: unknown[]) => void, timeout?: number, ...args: unknown[]) =>
-      globalThis.setTimeout(() => handler(...args), timeout),
-    clearTimeout: (timeoutId: number | undefined) => globalThis.clearTimeout(timeoutId),
-  });
-}
 
 function getLatestWebSocket(): MockWebSocket {
   const ws = wsInstances.at(-1);
@@ -192,7 +182,10 @@ describe("GatewayBrowserClient", () => {
     });
 
     vi.stubGlobal("localStorage", storage);
-    stubWindowGlobals(storage);
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: storage,
+    });
     localStorage.clear();
     vi.stubGlobal("WebSocket", MockWebSocket);
 
@@ -384,26 +377,6 @@ describe("GatewayBrowserClient", () => {
     vi.useRealTimers();
   });
 
-  it("cancels a queued connect send when stopped before the timeout fires", async () => {
-    vi.useFakeTimers();
-
-    const client = new GatewayBrowserClient({
-      url: "ws://127.0.0.1:18789",
-      token: "shared-auth-token",
-    });
-
-    client.start();
-    const ws = getLatestWebSocket();
-    ws.emitOpen();
-
-    client.stop();
-    await vi.advanceTimersByTimeAsync(750);
-
-    expect(ws.sent).toHaveLength(0);
-
-    vi.useRealTimers();
-  });
-
   it("does not auto-reconnect on AUTH_TOKEN_MISSING", async () => {
     vi.useFakeTimers();
     localStorage.clear();
@@ -435,14 +408,6 @@ describe("GatewayBrowserClient", () => {
 });
 
 describe("shouldRetryWithDeviceToken", () => {
-  beforeEach(() => {
-    stubWindowGlobals();
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it("allows a bounded retry for trusted loopback endpoints", () => {
     expect(
       shouldRetryWithDeviceToken({

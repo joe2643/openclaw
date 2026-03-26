@@ -8,6 +8,7 @@ import {
   setTabFromRoute,
   syncThemeWithSettings,
 } from "./app-settings.ts";
+import { createStorageMock } from "./test-helpers/storage.ts";
 import type { ThemeMode, ThemeName } from "./theme.ts";
 
 type Tab =
