@@ -715,14 +715,17 @@ export async function dispatchReplyFromConfig(params: {
             });
             if (shouldRouteToOriginating) {
               await sendPayloadAsync(ttsPayload, context?.abortSignal, false);
-            } else {
-              // Await confirmed delivery so the block-reply-pipeline only marks
-              // sentContentKeys after WhatsApp actually receives the block.
-              // Without this, the enqueue is synchronous and sentContentKeys is
-              // written before async delivery completes; if block delivery fails
-              // the final payload is then incorrectly suppressed and the channel
-              // receives neither blocks nor final.
+            } else if (context != null) {
+              // Pipeline path (block-reply-pipeline always passes context with abortSignal/timeoutMs):
+              // await confirmed delivery so sentContentKeys is only marked after the block actually
+              // reaches the channel. If delivery fails, sendBlockReplyAsync rejects → onBlockReply
+              // rejects → pipeline .catch skips sentContentKeys → final flows as fallback.
+              // Non-pipeline callers (inline sends, followup, media delivery) pass no context and
+              // await onBlockReply without error guards, so we stay fire-and-forget for those paths
+              // to avoid aborting the run on a transient block delivery failure.
               await dispatcher.sendBlockReplyAsync(ttsPayload);
+            } else {
+              dispatcher.sendBlockReply(ttsPayload);
             }
           };
           return run();
