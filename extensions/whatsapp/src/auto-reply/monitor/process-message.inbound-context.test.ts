@@ -360,7 +360,7 @@ describe("web processMessage inbound context", () => {
 
     // oxlint-disable-next-line typescript/no-explicit-any
     const replyOptions = (capturedDispatchParams as any)?.replyOptions;
-    expect(replyOptions?.disableBlockStreaming).toBe(false);
+    expect(replyOptions?.disableBlockStreaming).toBeUndefined();
   });
 
   it("passes sendComposing through as the reply typing callback", async () => {

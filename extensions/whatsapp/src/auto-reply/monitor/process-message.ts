@@ -471,7 +471,7 @@ export async function processMessage(params: {
       onReplyStart: params.msg.sendComposing,
     },
     replyOptions: {
-      disableBlockStreaming: !accountBlockStreamingEnabled,
+      disableBlockStreaming: !accountBlockStreamingEnabled ? true : undefined,
       onModelSelected,
     },
   });
