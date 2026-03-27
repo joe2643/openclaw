@@ -283,6 +283,7 @@ export async function processMessage(params: {
   const mediaLocalRoots = getAgentScopedMediaLocalRoots(params.cfg, params.route.agentId);
   let didLogHeartbeatStrip = false;
   let didSendReply = false;
+  let lastSentBlockText: string | null = null;
   const commandAuthorized = shouldComputeCommandAuthorized(params.msg.body, params.cfg)
     ? await resolveWhatsAppCommandAuthorized({ cfg: params.cfg, msg: params.msg })
     : undefined;
@@ -429,6 +430,15 @@ export async function processMessage(params: {
           // When block streaming is off, only deliver final replies.
           return;
         }
+        if (
+          info.kind === "final" &&
+          accountBlockStreamingEnabled &&
+          payload.text != null &&
+          payload.text === lastSentBlockText
+        ) {
+          // Block streaming already delivered identical content as the last block; skip duplicate final.
+          return;
+        }
         await deliverWebReply({
           replyResult: payload,
           msg: params.msg,
@@ -442,6 +452,9 @@ export async function processMessage(params: {
           tableMode,
         });
         didSendReply = true;
+        if (info.kind === "block" && payload.text != null) {
+          lastSentBlockText = payload.text;
+        }
         const shouldLog = payload.text ? true : undefined;
         params.rememberSentText(payload.text, {
           combinedBody,
