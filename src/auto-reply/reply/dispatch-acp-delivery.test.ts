@@ -19,6 +19,7 @@ function createDispatcher(): ReplyDispatcher {
   return {
     sendToolResult: vi.fn(() => true),
     sendBlockReply: vi.fn(() => true),
+    sendBlockReplyAsync: vi.fn(async () => {}),
     sendFinalReply: vi.fn(() => true),
     waitForIdle: vi.fn(async () => {}),
     getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 0 })),
@@ -138,6 +139,7 @@ describe("createAcpDispatchDeliveryCoordinator", () => {
     const dispatcher: ReplyDispatcher = {
       sendToolResult: vi.fn(() => true),
       sendBlockReply: vi.fn(() => false),
+      sendBlockReplyAsync: vi.fn(async () => {}),
       sendFinalReply: vi.fn(() => true),
       waitForIdle: vi.fn(async () => {}),
       getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 0 })),

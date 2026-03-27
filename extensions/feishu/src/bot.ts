@@ -1039,6 +1039,7 @@ export async function handleFeishuMessage(params: {
           const noopDispatcher = {
             sendToolResult: () => false,
             sendBlockReply: () => false,
+            sendBlockReplyAsync: async () => {},
             sendFinalReply: () => false,
             waitForIdle: async () => {},
             getQueuedCounts: () => ({ tool: 0, block: 0, final: 0 }),

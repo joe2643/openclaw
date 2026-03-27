@@ -64,6 +64,7 @@ function createDispatcher(): {
   const dispatcher: ReplyDispatcher = {
     sendToolResult: vi.fn(() => true),
     sendBlockReply: vi.fn(() => true),
+    sendBlockReplyAsync: vi.fn(async () => {}),
     sendFinalReply: vi.fn(() => true),
     waitForIdle: vi.fn(async () => {}),
     getQueuedCounts: vi.fn(() => counts),

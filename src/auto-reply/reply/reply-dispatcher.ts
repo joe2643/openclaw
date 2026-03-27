@@ -77,6 +77,14 @@ type ReplyDispatcherWithTypingResult = {
 export type ReplyDispatcher = {
   sendToolResult: (payload: ReplyPayload) => boolean;
   sendBlockReply: (payload: ReplyPayload) => boolean;
+  /**
+   * Enqueue a block reply and return a Promise that settles after actual delivery.
+   * Resolves on successful delivery, rejects if delivery fails.
+   * Use instead of sendBlockReply when the caller needs confirmed delivery before
+   * proceeding (e.g. block-streaming pipeline dedup: only suppress the final payload
+   * after we know the block actually reached the channel).
+   */
+  sendBlockReplyAsync: (payload: ReplyPayload) => Promise<void>;
   sendFinalReply: (payload: ReplyPayload) => boolean;
   waitForIdle: () => Promise<void>;
   getQueuedCounts: () => Record<ReplyDispatchKind, number>;
@@ -138,7 +146,15 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
     waitForIdle: () => sendChain,
   });
 
-  const enqueue = (kind: ReplyDispatchKind, payload: ReplyPayload) => {
+  // Optional per-delivery settlement callbacks passed by sendBlockReplyAsync so callers
+  // can await confirmed delivery (resolve) or catch delivery failure (reject).
+  type DeliverySettlement = { resolve: () => void; reject: (err: unknown) => void };
+
+  const enqueue = (
+    kind: ReplyDispatchKind,
+    payload: ReplyPayload,
+    onSettled?: DeliverySettlement,
+  ) => {
     const normalized = normalizeReplyPayloadInternal(payload, {
       responsePrefix: options.responsePrefix,
       enableSlackInteractiveReplies: options.enableSlackInteractiveReplies,
@@ -148,6 +164,9 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
       onSkip: (reason) => options.onSkip?.(payload, { kind, reason }),
     });
     if (!normalized) {
+      // Normalization failure = payload skipped. If a delivery promise was requested,
+      // resolve it immediately (no delivery needed — treat as a silent no-op).
+      onSettled?.resolve();
       return false;
     }
     queuedCounts[kind] += 1;
@@ -171,10 +190,14 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
         // Safe: deliver is called inside an async .then() callback, so even a synchronous
         // throw becomes a rejection that flows through .catch()/.finally(), ensuring cleanup.
         await options.deliver(normalized, { kind });
+        onSettled?.resolve();
       })
       .catch((err) => {
         failedCounts[kind] += 1;
         options.onError?.(err, { kind });
+        // Propagate delivery failure to per-item awaiter (if any) so the caller
+        // can react (e.g. skip sentContentKeys marking and allow the final to flow).
+        onSettled?.reject(err);
       })
       .finally(() => {
         pending -= 1;
@@ -217,6 +240,10 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
   return {
     sendToolResult: (payload) => enqueue("tool", payload),
     sendBlockReply: (payload) => enqueue("block", payload),
+    sendBlockReplyAsync: (payload) =>
+      new Promise<void>((resolve, reject) => {
+        enqueue("block", payload, { resolve, reject });
+      }),
     sendFinalReply: (payload) => enqueue("final", payload),
     waitForIdle: () => sendChain,
     getQueuedCounts: () => ({ ...queuedCounts }),

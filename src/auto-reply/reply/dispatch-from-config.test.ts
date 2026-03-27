@@ -235,6 +235,7 @@ function createDispatcher(): ReplyDispatcher {
   return {
     sendToolResult: vi.fn(() => true),
     sendBlockReply: vi.fn(() => true),
+    sendBlockReplyAsync: vi.fn(async () => {}),
     sendFinalReply: vi.fn(() => true),
     waitForIdle: vi.fn(async () => {}),
     getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 0 })),
@@ -2750,13 +2751,13 @@ describe("dispatchReplyFromConfig", () => {
       await opts?.onBlockReply?.({ text: "The answer is 42" });
       return { text: "The answer is 42" };
     };
-    // Capture what actually gets dispatched as block replies
-    (dispatcher.sendBlockReply as ReturnType<typeof vi.fn>).mockImplementation(
-      (payload: ReplyPayload) => {
+    // Capture what actually gets dispatched as block replies.
+    // sendBlockReplyAsync is used by onBlockReply (awaits confirmed delivery).
+    (dispatcher.sendBlockReplyAsync as ReturnType<typeof vi.fn>).mockImplementation(
+      async (payload: ReplyPayload) => {
         if (payload.text) {
           blockReplySentTexts.push(payload.text);
         }
-        return true;
       },
     );
     await dispatchReplyFromConfig({ ctx, cfg: emptyConfig, dispatcher, replyResolver });

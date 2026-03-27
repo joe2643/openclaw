@@ -716,7 +716,13 @@ export async function dispatchReplyFromConfig(params: {
             if (shouldRouteToOriginating) {
               await sendPayloadAsync(ttsPayload, context?.abortSignal, false);
             } else {
-              dispatcher.sendBlockReply(ttsPayload);
+              // Await confirmed delivery so the block-reply-pipeline only marks
+              // sentContentKeys after WhatsApp actually receives the block.
+              // Without this, the enqueue is synchronous and sentContentKeys is
+              // written before async delivery completes; if block delivery fails
+              // the final payload is then incorrectly suppressed and the channel
+              // receives neither blocks nor final.
+              await dispatcher.sendBlockReplyAsync(ttsPayload);
             }
           };
           return run();
