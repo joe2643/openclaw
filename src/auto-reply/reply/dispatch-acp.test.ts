@@ -434,6 +434,25 @@ describe("tryDispatchAcpReply", () => {
     }
   });
 
+  it("strips ThreadStarterBody from ACP prompt to avoid repeating it each turn", async () => {
+    setReadyAcpResolution();
+    managerMocks.runTurn.mockResolvedValue(undefined);
+
+    await runDispatch({
+      bodyForAgent: "hello",
+      ctxOverrides: {
+        ChatType: "group",
+        ThreadStarterBody: "this is the thread starter",
+      },
+    });
+
+    expect(managerMocks.runTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.not.stringContaining("this is the thread starter"),
+      }),
+    );
+  });
+
   it("includes InboundHistory in the ACP prompt text", async () => {
     setReadyAcpResolution();
     managerMocks.runTurn.mockResolvedValue(undefined);
