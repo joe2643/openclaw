@@ -379,7 +379,7 @@ describe("tts", () => {
       },
     ] as const)("$name", ({ cfg, expected, name }) => {
       const config = resolveTtsConfig(cfg);
-      const providerConfig = getResolvedSpeechProviderConfig(config, "microsoft") as {
+      const providerConfig = getResolvedSpeechProviderConfig(config, "microsoft", cfg) as {
         outputFormat?: string;
       };
       expect(providerConfig.outputFormat, name).toBe(expected);
@@ -707,7 +707,7 @@ describe("tts", () => {
       (testCase) => {
         withEnv(testCase.env, () => {
           const config = resolveTtsConfig(testCase.cfg);
-          const openaiConfig = getResolvedSpeechProviderConfig(config, "openai") as {
+          const openaiConfig = getResolvedSpeechProviderConfig(config, "openai", testCase.cfg) as {
             baseUrl?: string;
           };
           expect(openaiConfig.baseUrl, testCase.name).toBe(testCase.expected);

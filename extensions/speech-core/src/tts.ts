@@ -216,8 +216,9 @@ function resolveLazyProviderConfig(
 ): SpeechProviderConfig {
   const canonical =
     normalizeConfiguredSpeechProviderId(providerId) ?? providerId.trim().toLowerCase();
-  const existing = config.providerConfigs[canonical];
+  // Use caller-supplied cfg first, then fall back to the cfg captured at resolveTtsConfig time.
   const effectiveCfg = cfg ?? config.sourceConfig;
+  const existing = config.providerConfigs[canonical];
   if (existing && !effectiveCfg) {
     return existing;
   }
