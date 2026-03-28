@@ -85,7 +85,6 @@ apps/ios/*.mobileprovision
 # Local untracked files
 .local/
 docs/.local/
-docs/internal/
 tmp/
 IDENTITY.md
 USER.md
@@ -138,6 +137,4 @@ docs/superpowers
 
 # Deprecated changelog fragment workflow
 changelog/fragments/
-
-# Local scratch workspace
-.tmp/
+.gstack/
