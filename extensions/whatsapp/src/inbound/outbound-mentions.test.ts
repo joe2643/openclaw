@@ -117,8 +117,8 @@ describe("extractOutboundMentions", () => {
     ]);
   });
 
-  it("does not create false mention when code span removal merges tokens", () => {
-    expect(extractOutboundMentions("x`y`@1234567890")).toEqual([]);
+  it("does not create false mention when code span removal merges tokens (alt input)", () => {
+    expect(extractOutboundMentions("x`y`@1234567890").jids).toEqual([]);
   });
 
   it("matches mention followed by punctuation", () => {

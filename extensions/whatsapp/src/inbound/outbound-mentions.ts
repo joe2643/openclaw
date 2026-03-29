@@ -45,7 +45,7 @@ export function extractOutboundMentions(
     const digits = match[1]!; // e.g. "85251159218"
     const normalized = `+${digits}`;
     const originalJid = participantJidMap?.get(normalized);
-    if (originalJid && originalJid.endsWith("@lid")) {
+    if (originalJid && (originalJid.endsWith("@lid") || originalJid.includes("@hosted.lid"))) {
       // LID participant: use LID JID and rewrite text token to match
       jids.add(originalJid);
       const lidDigits = originalJid.replace(/@.*/, "");
