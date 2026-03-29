@@ -1,9 +1,11 @@
 import { Type } from "@sinclair/typebox";
+import path from "node:path";
 import type { OpenClawConfig } from "../../config/config.js";
 import { loadConfig } from "../../config/config.js";
 import { runMediaUnderstandingFile } from "../../media-understanding/runtime.js";
-import type { AnyAgentTool } from "./common.js";
+import type { AnyAgentTool, ToolFsPolicy } from "./common.js";
 import { readStringParam } from "./common.js";
+import { resolveMediaToolLocalRoots } from "./media-tool-shared.js";
 
 const TranscribeToolSchema = Type.Object({
   file_path: Type.String({
@@ -14,6 +16,8 @@ const TranscribeToolSchema = Type.Object({
 export function createTranscribeTool(opts?: {
   config?: OpenClawConfig;
   agentDir?: string;
+  workspaceDir?: string;
+  fsPolicy?: ToolFsPolicy;
 }): AnyAgentTool {
   return {
     label: "Transcribe Audio",
@@ -27,6 +31,18 @@ export function createTranscribeTool(opts?: {
       const params = args as Record<string, unknown>;
       const filePath = readStringParam(params, "file_path", { required: true });
       const cfg = opts?.config ?? loadConfig();
+
+      // Enforce workspace scoping: restrict accessible paths to local roots
+      const localRoots = resolveMediaToolLocalRoots(opts?.workspaceDir, {
+        workspaceOnly: opts?.fsPolicy?.workspaceOnly === true,
+      });
+      const resolved = path.resolve(filePath);
+      if (localRoots.length > 0 && !localRoots.some((root) => resolved.startsWith(root))) {
+        return {
+          content: [{ type: "text", text: `Access denied: path is outside allowed directories.` }],
+          details: { error: "path_restricted" },
+        };
+      }
 
       const result = await runMediaUnderstandingFile({
         capability: "audio",
