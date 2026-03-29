@@ -1,3 +1,4 @@
+import type { proto } from "@whiskeysockets/baileys";
 import { jidToE164, normalizeE164 } from "openclaw/plugin-sdk/text-runtime";
 
 const WHATSAPP_LID_RE = /@(lid|hosted\.lid)$/i;
