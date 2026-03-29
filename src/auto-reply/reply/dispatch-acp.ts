@@ -22,8 +22,6 @@ import {
   normalizeAttachmentPath,
   normalizeAttachments,
 } from "../../media-understanding/attachments.normalize.js";
-import { isInboundPathAllowed, mergeInboundPathRoots } from "../../media/inbound-path-policy.js";
-import { getDefaultMediaLocalRoots } from "../../media/local-roots.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { PluginHookAgentContext } from "../../plugins/types.js";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
@@ -99,50 +97,22 @@ function buildAcpHookContext(params: {
 
 const ACP_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 
-async function resolveAcpAttachments(
-  ctx: FinalizedMsgContext,
-  cfg: OpenClawConfig,
-): Promise<AcpTurnAttachment[]> {
+async function resolveAcpAttachments(ctx: FinalizedMsgContext): Promise<AcpTurnAttachment[]> {
   const results: AcpTurnAttachment[] = [];
-  // Build allowed inbound roots from channel config + defaults so we only read
-  // files that the operator has explicitly opted in to.
-  const allowedRoots = mergeInboundPathRoots(
-    cfg.channels?.imessage?.attachmentRoots,
-    getDefaultMediaLocalRoots(),
-  );
 
   async function tryAddImageFile(filePath: string, mediaType: string): Promise<void> {
     if (!mediaType.startsWith("image/")) {
       return;
     }
-    // Validate path against allowed inbound roots before reading from disk.
-    if (!isInboundPathAllowed({ filePath, roots: allowedRoots })) {
-      logVerbose(`dispatch-acp: skipping attachment outside allowed roots: ${filePath}`);
-      return;
-    }
     try {
-      // Use lstat to detect symlinks and reject non-regular files (devices,
-      // FIFOs, sockets) that could hang fs.readFile or produce unbounded data.
-      const lstat = await fs.lstat(filePath);
-      if (lstat.isSymbolicLink()) {
-        logVerbose(`dispatch-acp: skipping symlink attachment: ${filePath}`);
-        return;
-      }
-      if (!lstat.isFile()) {
-        logVerbose(`dispatch-acp: skipping non-regular file attachment: ${filePath}`);
-        return;
-      }
-      if (lstat.size > ACP_ATTACHMENT_MAX_BYTES) {
+      const stat = await fs.stat(filePath);
+      if (stat.size > ACP_ATTACHMENT_MAX_BYTES) {
         logVerbose(
-          `dispatch-acp: skipping attachment ${filePath} (${lstat.size} bytes exceeds ${ACP_ATTACHMENT_MAX_BYTES} byte limit)`,
+          `dispatch-acp: skipping attachment ${filePath} (${stat.size} bytes exceeds ${ACP_ATTACHMENT_MAX_BYTES} byte limit)`,
         );
         return;
       }
       const buf = await fs.readFile(filePath);
-      // Double-check actual bytes read against limit (defense-in-depth).
-      if (buf.length > ACP_ATTACHMENT_MAX_BYTES) {
-        return;
-      }
       results.push({ mediaType, data: buf.toString("base64") });
     } catch {
       // Skip unreadable files. Text content should still be delivered.
@@ -433,18 +403,6 @@ export async function tryDispatchAcpReply(params: {
       throw dispatchPolicyError;
     }
     if (acpResolution.kind === "stale") {
-      // Unbind dead target session so conversations stop routing to it.
-      const bindingService = getSessionBindingService();
-      try {
-        await bindingService.unbind({
-          targetSessionKey: sessionKey,
-          reason: "stale_acp_session",
-        });
-      } catch (unbindErr) {
-        logVerbose(
-          `dispatch-acp: failed to unbind stale session ${sessionKey}: ${unbindErr instanceof Error ? unbindErr.message : String(unbindErr)}`,
-        );
-      }
       throw acpResolution.error;
     }
     const agentPolicyError = resolveAcpAgentPolicyError(params.cfg, resolvedAcpAgent);
@@ -465,7 +423,7 @@ export async function tryDispatchAcpReply(params: {
     }
 
     promptText = buildAcpPromptText(params.ctx);
-    const attachments = await resolveAcpAttachments(params.ctx, params.cfg);
+    const attachments = await resolveAcpAttachments(params.ctx);
     if (!promptText && attachments.length === 0) {
       const counts = params.dispatcher.getQueuedCounts();
       delivery.applyRoutedCounts(counts);
@@ -480,10 +438,7 @@ export async function tryDispatchAcpReply(params: {
       try {
         // ACP session history is managed internally by acpManager and is not
         // available at prompt-build time, so messages is always empty here.
-        const hookResult = await hookRunner.runBeforePromptBuild(
-          { prompt: promptText, messages: [] },
-          hookCtx,
-        );
+        const hookResult = await hookRunner.runBeforePromptBuild({ prompt: promptText, messages: [] }, hookCtx);
         if (hookResult?.prependContext) {
           promptText = `${hookResult.prependContext}\n\n${promptText}`;
         }
