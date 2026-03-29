@@ -1,11 +1,12 @@
-import { Type } from "@sinclair/typebox";
 import path from "node:path";
+import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import { loadConfig } from "../../config/config.js";
 import { runMediaUnderstandingFile } from "../../media-understanding/runtime.js";
-import type { AnyAgentTool, ToolFsPolicy } from "./common.js";
+import type { AnyAgentTool } from "./common.js";
 import { readStringParam } from "./common.js";
 import { resolveMediaToolLocalRoots } from "./media-tool-shared.js";
+import type { ToolFsPolicy } from "./tool-runtime.helpers.js";
 
 const TranscribeToolSchema = Type.Object({
   file_path: Type.String({
