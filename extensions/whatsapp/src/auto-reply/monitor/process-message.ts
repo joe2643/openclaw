@@ -335,6 +335,8 @@ export async function processMessage(params: {
     ReplyToId: replyTo?.id,
     ReplyToBody: replyTo?.body,
     ReplyToSender: replyTo?.sender?.label,
+    ReplyToMediaPath: params.msg.replyToMediaPath,
+    ReplyToMediaType: params.msg.replyToMediaType,
     MediaPath: params.msg.mediaPath,
     MediaUrl: params.msg.mediaUrl,
     MediaType: params.msg.mediaType,
