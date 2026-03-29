@@ -63,7 +63,7 @@ async function writePrunedMediaCaches(
       }
       const textBlock = block;
       while (refIdx < refs.length && textBlock.text.includes(PRUNED_CONTEXT_IMAGE_MARKER)) {
-        const ref = refs[refIdx++]!;
+        const ref = refs[refIdx++];
         const cachedPath = cachedPaths.get(ref);
         if (!cachedPath) {
           continue; // Write failed; leave the original marker
