@@ -2,7 +2,6 @@ import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import { loadConfig } from "../../config/config.js";
-import { runMediaUnderstandingFile } from "../../media-understanding/runtime.js";
 import type { AnyAgentTool } from "./common.js";
 import { readStringParam } from "./common.js";
 import { resolveMediaToolLocalRoots } from "./media-tool-shared.js";
@@ -44,6 +43,9 @@ export function createTranscribeTool(opts?: {
           details: { error: "path_restricted" },
         };
       }
+
+      // Lazy-load to avoid pulling heavy media-understanding deps at startup
+      const { runMediaUnderstandingFile } = await import("../../media-understanding/runtime.js");
 
       const result = await runMediaUnderstandingFile({
         capability: "audio",
