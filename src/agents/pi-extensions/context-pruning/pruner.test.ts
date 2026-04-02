@@ -1,7 +1,11 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { pruneContextMessages } from "./pruner.js";
+import {
+  PRUNED_CONTEXT_IMAGE_MARKER,
+  pruneContextMessages,
+  pruneContextMessagesWithMediaCollection,
+} from "./pruner.js";
 import { DEFAULT_CONTEXT_PRUNING_SETTINGS } from "./settings.js";
 
 type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
@@ -236,5 +240,166 @@ describe("pruneContextMessages", () => {
 
     const toolResult = result[1] as Extract<AgentMessage, { role: "toolResult" }>;
     expect(toolResult.content).toEqual([{ type: "text", text: placeholder }]);
+  });
+});
+
+describe("pruneContextMessagesWithMediaCollection", () => {
+  const SOFT_ONLY_SETTINGS = {
+    ...DEFAULT_CONTEXT_PRUNING_SETTINGS,
+    keepLastAssistants: 1,
+    softTrimRatio: 0,
+    hardClearRatio: 10, // never triggers
+    hardClear: { ...DEFAULT_CONTEXT_PRUNING_SETTINGS.hardClear, enabled: false },
+    softTrim: { maxChars: 200, headChars: 170, tailChars: 30 },
+  };
+
+  const HARD_CLEAR_SETTINGS = {
+    ...DEFAULT_CONTEXT_PRUNING_SETTINGS,
+    keepLastAssistants: 1,
+    softTrimRatio: 0,
+    hardClearRatio: 0, // always triggers
+    minPrunableToolChars: 1,
+    softTrim: { maxChars: 50_000, headChars: 25_000, tailChars: 25_000 },
+    hardClear: { enabled: true, placeholder: "[tool output cleared]" },
+  };
+
+  it("returns original messages and empty prunedMedia when context is under threshold", () => {
+    const messages: AgentMessage[] = [
+      makeUser("hi"),
+      makeToolResult([{ type: "image", data: "img", mimeType: "image/png" }]),
+      makeAssistant([{ type: "text", text: "ok" }]),
+    ];
+    const { messages: result, prunedMedia } = pruneContextMessagesWithMediaCollection({
+      messages,
+      settings: DEFAULT_CONTEXT_PRUNING_SETTINGS,
+      ctx: CONTEXT_WINDOW_1M,
+    });
+    expect(result).toBe(messages);
+    expect(prunedMedia).toHaveLength(0);
+  });
+
+  it("collects image data into prunedMedia during soft-trim", () => {
+    const messages: AgentMessage[] = [
+      makeUser("summarize"),
+      makeToolResult([
+        { type: "text", text: "A".repeat(120) },
+        { type: "image", data: "base64img", mimeType: "image/png" },
+        { type: "text", text: "B".repeat(120) },
+      ]),
+      makeAssistant([{ type: "text", text: "done" }]),
+    ];
+    const { messages: result, prunedMedia } = pruneContextMessagesWithMediaCollection({
+      messages,
+      settings: SOFT_ONLY_SETTINGS,
+      ctx: CONTEXT_WINDOW_1M,
+      isToolPrunable: () => true,
+      contextWindowTokensOverride: 16,
+    });
+
+    expect(prunedMedia).toHaveLength(1);
+    expect(prunedMedia[0]).toMatchObject({
+      messageIndex: 1,
+      data: "base64img",
+      mimeType: "image/png",
+    });
+
+    // The trimmed message should have the placeholder marker in its text
+    const toolResult = result[1] as Extract<AgentMessage, { role: "toolResult" }>;
+    const textBlock = toolResult.content[0] as { type: "text"; text: string };
+    expect(textBlock.text).toContain(PRUNED_CONTEXT_IMAGE_MARKER);
+  });
+
+  it("collects image data and injects markers during hard-clear-only (no prior soft-trim of this message)", () => {
+    // Image-only message: soft-trim finds the image via onMedia but returns null
+    // (marker text is tiny, under maxChars). Hard-clear then fires.
+    const messages: AgentMessage[] = [
+      makeUser("summarize"),
+      makeToolResult([{ type: "image", data: "base64img", mimeType: "image/jpeg" }]),
+      makeAssistant([{ type: "text", text: "done" }]),
+    ];
+    const { messages: result, prunedMedia } = pruneContextMessagesWithMediaCollection({
+      messages,
+      settings: HARD_CLEAR_SETTINGS,
+      ctx: CONTEXT_WINDOW_1M,
+      isToolPrunable: () => true,
+      contextWindowTokensOverride: 8,
+    });
+
+    expect(prunedMedia).toHaveLength(1);
+    expect(prunedMedia[0]).toMatchObject({
+      messageIndex: 1,
+      data: "base64img",
+      mimeType: "image/jpeg",
+    });
+
+    // Hard-cleared content must include a PRUNED_CONTEXT_IMAGE_MARKER so writePrunedMediaCaches
+    // can replace it with a [media cached:] reference.
+    const toolResult = result[1] as Extract<AgentMessage, { role: "toolResult" }>;
+    const texts = (toolResult.content as Array<{ type: string; text?: string }>)
+      .filter((b) => b.type === "text")
+      .map((b) => b.text ?? "");
+    expect(texts).toContain(PRUNED_CONTEXT_IMAGE_MARKER);
+  });
+
+  it("injects markers into hard-cleared content when message was also soft-trimmed", () => {
+    // Both soft-trim and hard-clear fire on the same message.
+    // The soft-trim replaces the image with PRUNED_CONTEXT_IMAGE_MARKER in the text, but
+    // hard-clear then replaces the entire content. The marker must survive into the
+    // cleared content so writePrunedMediaCaches can still replace it.
+    const messages: AgentMessage[] = [
+      makeUser("summarize"),
+      makeToolResult([
+        { type: "text", text: "A".repeat(300) },
+        { type: "image", data: "base64img", mimeType: "image/png" },
+      ]),
+      makeAssistant([{ type: "text", text: "done" }]),
+    ];
+    const { messages: result, prunedMedia } = pruneContextMessagesWithMediaCollection({
+      messages,
+      settings: {
+        ...HARD_CLEAR_SETTINGS,
+        softTrim: { maxChars: 200, headChars: 170, tailChars: 30 },
+      },
+      ctx: CONTEXT_WINDOW_1M,
+      isToolPrunable: () => true,
+      contextWindowTokensOverride: 8,
+    });
+
+    expect(prunedMedia).toHaveLength(1);
+    expect(prunedMedia[0]).toMatchObject({
+      messageIndex: 1,
+      data: "base64img",
+      mimeType: "image/png",
+    });
+
+    // The hard-cleared message must contain a PRUNED_CONTEXT_IMAGE_MARKER block.
+    const toolResult = result[1] as Extract<AgentMessage, { role: "toolResult" }>;
+    const texts = (toolResult.content as Array<{ type: string; text?: string }>)
+      .filter((b) => b.type === "text")
+      .map((b) => b.text ?? "");
+    expect(texts).toContain(PRUNED_CONTEXT_IMAGE_MARKER);
+    expect(texts).toContain(HARD_CLEAR_SETTINGS.hardClear.placeholder);
+  });
+
+  it("collects multiple image refs from the same message", () => {
+    const messages: AgentMessage[] = [
+      makeUser("summarize"),
+      makeToolResult([
+        { type: "image", data: "img1", mimeType: "image/png" },
+        { type: "image", data: "img2", mimeType: "image/jpeg" },
+      ]),
+      makeAssistant([{ type: "text", text: "done" }]),
+    ];
+    const { prunedMedia } = pruneContextMessagesWithMediaCollection({
+      messages,
+      settings: HARD_CLEAR_SETTINGS,
+      ctx: CONTEXT_WINDOW_1M,
+      isToolPrunable: () => true,
+      contextWindowTokensOverride: 8,
+    });
+
+    expect(prunedMedia).toHaveLength(2);
+    expect(prunedMedia[0]).toMatchObject({ messageIndex: 1, data: "img1" });
+    expect(prunedMedia[1]).toMatchObject({ messageIndex: 1, data: "img2" });
   });
 });

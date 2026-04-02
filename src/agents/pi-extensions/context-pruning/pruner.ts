@@ -455,9 +455,6 @@ export function pruneContextMessagesWithMediaCollection(params: {
   const prunableToolIndexes: number[] = [];
   let next: AgentMessage[] | null = null;
 
-  // Track which message indexes already had their media collected during soft-trim
-  const softTrimmedIndexes = new Set<number>();
-
   for (let i = pruneStartIndex; i < cutoffIndex; i++) {
     const msg = messages[i];
     if (!msg || msg.role !== "toolResult") {
@@ -477,7 +474,6 @@ export function pruneContextMessagesWithMediaCollection(params: {
           data: block.data,
           mimeType: block.mimeType,
         });
-        softTrimmedIndexes.add(i);
       },
     });
     if (!updated) {
@@ -514,6 +510,13 @@ export function pruneContextMessagesWithMediaCollection(params: {
     return { messages: outputAfterSoftTrim, prunedMedia };
   }
 
+  // Count already-collected media refs per message index (from the soft-trim phase above).
+  // Used in hard-clear to add the right number of placeholder markers per message.
+  const softPhaseMediaCount = new Map<number, number>();
+  for (const ref of prunedMedia) {
+    softPhaseMediaCount.set(ref.messageIndex, (softPhaseMediaCount.get(ref.messageIndex) ?? 0) + 1);
+  }
+
   for (const i of prunableToolIndexes) {
     if (ratio < settings.hardClearRatio) {
       break;
@@ -523,12 +526,23 @@ export function pruneContextMessagesWithMediaCollection(params: {
       continue;
     }
 
-    // Collect any remaining media blocks from the original message if they weren't
-    // already collected during soft-trim. Insert PRUNED_CONTEXT_IMAGE_MARKER into
-    // the cleared content so writePrunedMediaCaches can replace them with
-    // [media cached:] markers later.
+    // Inject PRUNED_CONTEXT_IMAGE_MARKER placeholder(s) into the cleared content so
+    // writePrunedMediaCaches can replace them with [media cached:] refs.
+    //
+    // If media was already collected during soft-trim (existingCount > 0), re-add one
+    // marker per ref — the soft-trimmed text is being discarded by hard-clear, so we
+    // need new markers in the cleared content.
+    //
+    // If no media was collected yet, collect from the original message now (hard-clear
+    // only path: the message was never soft-trimmed or had no images).
     const hardClearMediaMarkers: TextContent[] = [];
-    if (!softTrimmedIndexes.has(i)) {
+    const existingCount = softPhaseMediaCount.get(i) ?? 0;
+    if (existingCount > 0) {
+      // Already in prunedMedia from soft-trim; just add the matching markers.
+      for (let j = 0; j < existingCount; j++) {
+        hardClearMediaMarkers.push(asText(PRUNED_CONTEXT_IMAGE_MARKER));
+      }
+    } else {
       const originalMsg = messages[i];
       if (originalMsg?.role === "toolResult") {
         for (const block of (originalMsg as unknown as ToolResultMessage).content) {
