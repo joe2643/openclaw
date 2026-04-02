@@ -121,14 +121,28 @@ async function resolveAcpAttachments(
       return;
     }
     try {
-      const stat = await fs.stat(filePath);
-      if (stat.size > ACP_ATTACHMENT_MAX_BYTES) {
+      // Use lstat to detect symlinks and reject non-regular files (devices,
+      // FIFOs, sockets) that could hang fs.readFile or produce unbounded data.
+      const lstat = await fs.lstat(filePath);
+      if (lstat.isSymbolicLink()) {
+        logVerbose(`dispatch-acp: skipping symlink attachment: ${filePath}`);
+        return;
+      }
+      if (!lstat.isFile()) {
+        logVerbose(`dispatch-acp: skipping non-regular file attachment: ${filePath}`);
+        return;
+      }
+      if (lstat.size > ACP_ATTACHMENT_MAX_BYTES) {
         logVerbose(
-          `dispatch-acp: skipping attachment ${filePath} (${stat.size} bytes exceeds ${ACP_ATTACHMENT_MAX_BYTES} byte limit)`,
+          `dispatch-acp: skipping attachment ${filePath} (${lstat.size} bytes exceeds ${ACP_ATTACHMENT_MAX_BYTES} byte limit)`,
         );
         return;
       }
       const buf = await fs.readFile(filePath);
+      // Double-check actual bytes read against limit (defense-in-depth).
+      if (buf.length > ACP_ATTACHMENT_MAX_BYTES) {
+        return;
+      }
       results.push({ mediaType, data: buf.toString("base64") });
     } catch {
       // Skip unreadable files. Text content should still be delivered.
