@@ -54,22 +54,25 @@ async function writePrunedMediaCaches(
       continue;
     }
     const content = msg.content as (TextContent | { type: string })[];
+    // Consume refs sequentially across blocks. Hard-clear emits one block per image,
+    // so the outer loop must advance refIdx rather than restarting from 0 per block.
+    let refIdx = 0;
     for (const block of content) {
       if (!("text" in block) || typeof block.text !== "string") {
         continue;
       }
-      const textBlock = block;
-      // Replace each PRUNED_CONTEXT_IMAGE_MARKER occurrence with the corresponding cache marker.
-      // Refs are in insertion order, so sequential replacement matches correctly.
-      for (const ref of refs) {
+      // Replace each PRUNED_CONTEXT_IMAGE_MARKER in this block with the next ref in order.
+      while (block.text.includes(PRUNED_CONTEXT_IMAGE_MARKER) && refIdx < refs.length) {
+        const ref = refs[refIdx++];
         const cachedPath = cachedPaths.get(ref);
         if (!cachedPath) {
-          continue; // Write failed; leave the original marker
+          // Write failed; leave this marker in place and stop processing this block
+          // to avoid infinite-looping on the unmodified marker.
+          break;
         }
         const kind = mediaCacheKind(ref.mimeType);
         const cacheMarker = buildCachedMediaMarker(cachedPath, ref.mimeType, kind);
-        // Replace only the first occurrence (one per ref)
-        textBlock.text = textBlock.text.replace(PRUNED_CONTEXT_IMAGE_MARKER, cacheMarker);
+        block.text = block.text.replace(PRUNED_CONTEXT_IMAGE_MARKER, cacheMarker);
       }
     }
   }
