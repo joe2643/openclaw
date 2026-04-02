@@ -1,7 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent, TextContent, ToolResultMessage } from "@mariozechner/pi-ai";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { CACHED_MEDIA_MARKER_PREFIX } from "../../../media/media-cache.js";
 import { CHARS_PER_TOKEN_ESTIMATE, estimateStringChars } from "../../../utils/cjk-chars.js";
 import { dropThinkingBlocks } from "../../pi-embedded-runner/thinking.js";
 import type { EffectiveContextPruningSettings } from "./settings.js";
@@ -10,9 +9,17 @@ import { makeToolPrunablePredicate } from "./tools.js";
 const IMAGE_CHAR_ESTIMATE = 8_000;
 export const PRUNED_CONTEXT_IMAGE_MARKER = "[image removed during context pruning]";
 
+// Matches individual [media cached: ...] markers within a text block.
+// Using a module-level constant avoids recompiling the regex on every call.
+const CACHED_MEDIA_MARKER_RE = /\[media cached:[^\]]+\]/g;
+
 /**
- * Extract text blocks containing `[media cached: ...]` markers from a tool result
- * so they can be preserved through hard-clear operations.
+ * Extract individual `[media cached: ...]` marker strings from a tool result so they
+ * can be preserved through hard-clear operations.
+ *
+ * Only the marker text itself is extracted — not the surrounding block content — so
+ * that a previously soft-trimmed block (which may contain head/tail tool output) does
+ * not leak that surrounding text into the cleared result.
  */
 function extractCachedMediaMarkers(msg: AgentMessage): TextContent[] {
   if (msg.role !== "toolResult") {
@@ -20,12 +27,10 @@ function extractCachedMediaMarkers(msg: AgentMessage): TextContent[] {
   }
   const markers: TextContent[] = [];
   for (const block of (msg as unknown as ToolResultMessage).content) {
-    if (
-      "text" in block &&
-      typeof block.text === "string" &&
-      block.text.includes(CACHED_MEDIA_MARKER_PREFIX)
-    ) {
-      markers.push(block);
+    if ("text" in block && typeof block.text === "string") {
+      for (const m of block.text.matchAll(CACHED_MEDIA_MARKER_RE)) {
+        markers.push(asText(m[0]));
+      }
     }
   }
   return markers;
