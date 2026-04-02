@@ -136,10 +136,10 @@ describe("extractOutboundMentions", () => {
       ]);
     });
 
-    it("uses original LID JID from map instead of defaulting to @s.whatsapp.net", () => {
+    it("uses user-level LID JID (no device suffix) from map instead of defaulting to @s.whatsapp.net", () => {
       const jidMap = new Map([["+1234567890123456789", "1234567890123456789:0@lid"]]);
       expect(extractOutboundMentions("Hey @+1234567890123456789", jidMap).jids).toEqual([
-        "1234567890123456789:0@lid",
+        "1234567890123456789@lid",
       ]);
     });
 
@@ -161,16 +161,25 @@ describe("extractOutboundMentions", () => {
       );
       expect(result.jids).toEqual([
         "1234567890@s.whatsapp.net",
-        "9876543210123456789:0@lid",
+        "9876543210123456789@lid",
         "5555555555@s.whatsapp.net",
       ]);
     });
 
-    it("resolves LID mention correctly with hosted.lid suffix", () => {
+    it("resolves LID mention correctly with hosted.lid suffix, stripping device suffix", () => {
       const jidMap = new Map([["+12345678901234567890", "12345678901234567890:1@hosted.lid"]]);
-      expect(extractOutboundMentions("@+12345678901234567890", jidMap).jids).toEqual([
-        "12345678901234567890:1@hosted.lid",
-      ]);
+      const result = extractOutboundMentions("@+12345678901234567890", jidMap);
+      // JID should be user-level (no ":1" device suffix)
+      expect(result.jids).toEqual(["12345678901234567890@hosted.lid"]);
+      // Text token should be the LID digits only (no ":1")
+      expect(result.text).toBe("@12345678901234567890");
+    });
+
+    it("rewrites phone token to LID digits without device suffix", () => {
+      const jidMap = new Map([["+85251159218", "101653353078797:1@hosted.lid"]]);
+      const result = extractOutboundMentions("Hey @+85251159218 can you help?", jidMap);
+      expect(result.jids).toEqual(["101653353078797@hosted.lid"]);
+      expect(result.text).toBe("Hey @101653353078797 can you help?");
     });
   });
 });

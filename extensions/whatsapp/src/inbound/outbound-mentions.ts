@@ -46,9 +46,13 @@ export function extractOutboundMentions(
     const normalized = `+${digits}`;
     const originalJid = participantJidMap?.get(normalized);
     if (originalJid && (originalJid.endsWith("@lid") || originalJid.includes("@hosted.lid"))) {
-      // LID participant: use LID JID and rewrite text token to match
-      jids.add(originalJid);
-      const lidDigits = originalJid.replace(/@.*/, "");
+      // LID participant: use user-level JID (no device suffix) for the mentions field
+      // and rewrite text token to match just the numeric user part.
+      // Strip ":device" suffix before "@" so "101653353078797:1@hosted.lid" becomes
+      // "101653353078797@hosted.lid" — WhatsApp requires the user-level JID in mentions.
+      const userJid = originalJid.replace(/:[\d]+@/, "@");
+      jids.add(userJid);
+      const lidDigits = userJid.replace(/@.*/, "");
       const newToken = `@${lidDigits}`;
       if (fullToken !== newToken) {
         replacements.push({ from: fullToken, to: newToken });
