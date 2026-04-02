@@ -12,6 +12,7 @@ import { buildOutboundBaseSessionKey, type RoutePeer } from "openclaw/plugin-sdk
 import { createComputedAccountStatusAdapter } from "openclaw/plugin-sdk/status-helpers";
 import { resolveSignalAccount, type ResolvedSignalAccount } from "./accounts.js";
 import { signalApprovalAuth } from "./approval-auth.js";
+import { stripAssistantInternalScaffolding } from "openclaw/plugin-sdk/text-runtime";
 import { markdownToSignalTextChunks } from "./format.js";
 import { signalMessageActions } from "./message-actions.js";
 import { looksLikeSignalTargetId, normalizeSignalMessagingTarget } from "./normalize.js";
@@ -67,7 +68,8 @@ async function sendSignalOutbound(params: {
   deps?: { [channelId: string]: unknown };
 }) {
   const { send, maxBytes } = resolveSignalSendContext(params);
-  return await send(params.to, params.text, {
+  const sanitized = stripAssistantInternalScaffolding(params.text).replace(/\n{3,}/g, "\n\n").trim();
+  return await send(params.to, sanitized, {
     cfg: params.cfg,
     ...(params.mediaUrl ? { mediaUrl: params.mediaUrl } : {}),
     ...(params.mediaLocalRoots?.length ? { mediaLocalRoots: params.mediaLocalRoots } : {}),
@@ -162,10 +164,11 @@ async function sendFormattedSignalText(ctx: {
     channel: "signal",
     accountId: ctx.accountId ?? undefined,
   });
+  const sanitized = stripAssistantInternalScaffolding(ctx.text).replace(/\n{3,}/g, "\n\n").trim();
   let chunks =
     limit === undefined
-      ? markdownToSignalTextChunks(ctx.text, Number.POSITIVE_INFINITY, { tableMode })
-      : markdownToSignalTextChunks(ctx.text, limit, { tableMode });
+      ? markdownToSignalTextChunks(sanitized, Number.POSITIVE_INFINITY, { tableMode })
+      : markdownToSignalTextChunks(sanitized, limit, { tableMode });
   if (chunks.length === 0 && ctx.text) {
     chunks = [{ text: ctx.text, styles: [] }];
   }
@@ -206,10 +209,11 @@ async function sendFormattedSignalMedia(ctx: {
     channel: "signal",
     accountId: ctx.accountId ?? undefined,
   });
-  const formatted = markdownToSignalTextChunks(ctx.text, Number.POSITIVE_INFINITY, {
+  const sanitized = stripAssistantInternalScaffolding(ctx.text).replace(/\n{3,}/g, "\n\n").trim();
+  const formatted = markdownToSignalTextChunks(sanitized, Number.POSITIVE_INFINITY, {
     tableMode,
   })[0] ?? {
-    text: ctx.text,
+    text: sanitized,
     styles: [],
   };
   const result = await send(ctx.to, formatted.text, {
