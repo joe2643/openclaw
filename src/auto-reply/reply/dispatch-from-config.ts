@@ -1,5 +1,6 @@
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import { isParentOwnedBackgroundAcpSession } from "../../acp/session-interaction-mode.js";
+import { stripAssistantInternalScaffolding } from "../../shared/text/assistant-visible-text.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import {
   resolveConversationBindingRecord,
@@ -697,6 +698,16 @@ export async function dispatchReplyFromConfig(params: {
             // Telegram has its own dispatch path that handles reasoning splitting.
             if (payload.isReasoning === true) {
               return;
+            }
+            // Strip reasoning tags from block reply text. Tag-based reasoning
+            // models (Qwen, GLM, DeepSeek) may embed <think> blocks in the
+            // streamed text that must not reach the end user.
+            if (payload.text) {
+              const strippedText = stripAssistantInternalScaffolding(payload.text);
+              payload = { ...payload, text: strippedText };
+              if (!strippedText.trim()) {
+                return;
+              }
             }
             // Accumulate block text for TTS generation after streaming.
             // Exclude compaction status notices — they are informational UI
