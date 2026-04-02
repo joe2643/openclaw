@@ -2,7 +2,12 @@ import { normalizeE164 } from "openclaw/plugin-sdk/text-runtime";
 
 function appendNormalizedUnique(entries: Iterable<string>, seen: Set<string>, ordered: string[]) {
   for (const entry of entries) {
-    const normalized = normalizeE164(entry) ?? entry;
+    // For phone numbers, normalizeE164 returns the canonical E.164 form.
+    // For LID JIDs (e.g. "101653353078797:1@hosted.lid"), strip device suffix
+    // and domain so the agent sees a clean number it can use for @mentions.
+    const normalized =
+      normalizeE164(entry) ??
+      (entry.includes("@") ? entry.replace(/:[\d]+@.*$/, "").replace(/@.*$/, "") : entry);
     if (!normalized || seen.has(normalized)) {
       continue;
     }
