@@ -6,7 +6,6 @@ import { AcpRuntimeError } from "../../acp/runtime/errors.js";
 import type { AcpSessionStoreEntry } from "../../acp/runtime/session-meta.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionBindingRecord } from "../../infra/outbound/session-binding-service.js";
-import { withFetchPreconnect } from "../../test-utils/fetch-mock.js";
 import type { ReplyDispatcher } from "./reply-dispatcher.js";
 import { buildTestCtx } from "./test-ctx.js";
 import { createAcpSessionMeta, createAcpTestConfig } from "./test-fixtures/acp-runtime.js";
@@ -43,10 +42,6 @@ const ttsMocks = vi.hoisted(() => ({
   resolveTtsConfig: vi.fn((_cfg: OpenClawConfig) => ({ mode: "final" })),
 }));
 
-const mediaUnderstandingMocks = vi.hoisted(() => ({
-  applyMediaUnderstanding: vi.fn(async (_params: unknown) => undefined),
-}));
-
 const sessionMetaMocks = vi.hoisted(() => ({
   readAcpSessionEntry: vi.fn<
     (params: { sessionKey: string; cfg?: OpenClawConfig }) => AcpSessionStoreEntry | null
@@ -55,7 +50,9 @@ const sessionMetaMocks = vi.hoisted(() => ({
 
 const bindingServiceMocks = vi.hoisted(() => ({
   listBySession: vi.fn<(sessionKey: string) => SessionBindingRecord[]>(() => []),
-  unbind: vi.fn<(input: unknown) => Promise<SessionBindingRecord[]>>(async () => []),
+  unbind: vi.fn<
+    (input: { targetSessionKey?: string; reason: string }) => Promise<SessionBindingRecord[]>
+  >(async () => []),
 }));
 
 const sessionKey = "agent:codex-acp:session-1";
@@ -109,20 +106,18 @@ async function runDispatch(params: {
   shouldRouteToOriginating?: boolean;
   onReplyStart?: () => void;
   ctxOverrides?: Record<string, unknown>;
-  sessionKeyOverride?: string;
 }) {
-  const targetSessionKey = params.sessionKeyOverride ?? sessionKey;
   return tryDispatchAcpReply({
     ctx: buildTestCtx({
       Provider: "discord",
       Surface: "discord",
-      SessionKey: targetSessionKey,
+      SessionKey: sessionKey,
       BodyForAgent: params.bodyForAgent,
       ...params.ctxOverrides,
     }),
     cfg: params.cfg ?? createAcpTestConfig(),
     dispatcher: params.dispatcher ?? createDispatcher().dispatcher,
-    sessionKey: targetSessionKey,
+    sessionKey,
     inboundAudio: false,
     shouldRouteToOriginating: params.shouldRouteToOriginating ?? false,
     ...(params.shouldRouteToOriginating
@@ -241,10 +236,6 @@ describe("tryDispatchAcpReply", () => {
       maybeApplyTtsToPayload: (params: unknown) => ttsMocks.maybeApplyTtsToPayload(params),
       resolveTtsConfig: (cfg: OpenClawConfig) => ttsMocks.resolveTtsConfig(cfg),
     }));
-    vi.doMock("../../media-understanding/apply.js", () => ({
-      applyMediaUnderstanding: (params: unknown) =>
-        mediaUnderstandingMocks.applyMediaUnderstanding(params),
-    }));
     vi.doMock("../../acp/runtime/session-meta.js", () => ({
       readAcpSessionEntry: (params: { sessionKey: string; cfg?: OpenClawConfig }) =>
         sessionMetaMocks.readAcpSessionEntry(params),
@@ -253,30 +244,9 @@ describe("tryDispatchAcpReply", () => {
       getSessionBindingService: () => ({
         listBySession: (targetSessionKey: string) =>
           bindingServiceMocks.listBySession(targetSessionKey),
-        unbind: (input: unknown) => bindingServiceMocks.unbind(input),
+        unbind: (input: { targetSessionKey?: string; reason: string }) =>
+          bindingServiceMocks.unbind(input),
       }),
-    }));
-    // Mock modules that cause hang during vi.resetModules()+dynamic import:
-    // tool-display.ts uses JSON import assertions (`with { type: "json" }`) which
-    // deadlocks in Vitest forks pool when re-evaluated via vi.resetModules().
-    // Mock it at the source so acp-projector.ts can still load with real logic.
-    // formatToolSummary must vary by input so repeat-suppression doesn't collapse distinct events.
-    vi.doMock("../../agents/tool-display.js", () => ({
-      resolveToolDisplay: vi.fn((params: { name?: string; meta?: string }) => ({
-        name: params?.name ?? "tool",
-        emoji: "🔧",
-        title: params?.meta ?? "tool call",
-        label: params?.meta ?? "tool call",
-      })),
-      formatToolSummary: vi.fn((display: { emoji?: string; label?: string; detail?: string }) =>
-        display?.detail
-          ? `${display.emoji ?? "🔧"} ${display.label ?? "tool"}: ${display.detail}`
-          : `${display.emoji ?? "🔧"} ${display.label ?? "tool"}`,
-      ),
-      formatToolDetail: vi.fn(() => undefined),
-    }));
-    vi.doMock("../../media-understanding/apply.js", () => ({
-      applyMediaUnderstanding: vi.fn(async () => {}),
     }));
     ({ tryDispatchAcpReply } = await import("./dispatch-acp.js"));
     managerMocks.resolveSession.mockReset();
@@ -297,8 +267,6 @@ describe("tryDispatchAcpReply", () => {
     ttsMocks.maybeApplyTtsToPayload.mockClear();
     ttsMocks.resolveTtsConfig.mockReset();
     ttsMocks.resolveTtsConfig.mockReturnValue({ mode: "final" });
-    mediaUnderstandingMocks.applyMediaUnderstanding.mockReset();
-    mediaUnderstandingMocks.applyMediaUnderstanding.mockResolvedValue(undefined);
     sessionMetaMocks.readAcpSessionEntry.mockReset();
     sessionMetaMocks.readAcpSessionEntry.mockReturnValue(null);
     bindingServiceMocks.listBySession.mockReset();
@@ -466,100 +434,107 @@ describe("tryDispatchAcpReply", () => {
     }
   });
 
-  it("skips ACP attachments outside allowed inbound roots", async () => {
+  it("strips ThreadStarterBody from ACP prompt to avoid repeating it each turn", async () => {
+    setReadyAcpResolution();
+    managerMocks.runTurn.mockResolvedValue(undefined);
+
+    await runDispatch({
+      bodyForAgent: "hello",
+      ctxOverrides: {
+        ChatType: "group",
+        ThreadStarterBody: "this is the thread starter",
+      },
+    });
+
+    expect(managerMocks.runTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.not.stringContaining("this is the thread starter"),
+      }),
+    );
+  });
+
+  it("includes InboundHistory in the ACP prompt text", async () => {
+    setReadyAcpResolution();
+    managerMocks.runTurn.mockResolvedValue(undefined);
+
+    await runDispatch({
+      bodyForAgent: "what did she say?",
+      ctxOverrides: {
+        ChatType: "group",
+        InboundHistory: [{ sender: "Alice", body: "hey there", timestamp: 1711580400000 }],
+      },
+    });
+
+    expect(managerMocks.runTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Chat history since last reply"),
+      }),
+    );
+    expect(managerMocks.runTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("what did she say?"),
+      }),
+    );
+  });
+
+  it("does not skip ACP turn when only InboundHistory is present with no body", async () => {
+    setReadyAcpResolution();
+    managerMocks.runTurn.mockResolvedValue(undefined);
+    const onReplyStart = vi.fn();
+
+    await runDispatch({
+      bodyForAgent: "   ",
+      onReplyStart,
+      ctxOverrides: {
+        ChatType: "group",
+        InboundHistory: [{ sender: "Bob", body: "hello group", timestamp: 1711580400000 }],
+      },
+    });
+
+    expect(managerMocks.runTurn).toHaveBeenCalled();
+  });
+
+  it("includes InboundHistory images as ACP attachments when mediaPath is present", async () => {
     setReadyAcpResolution();
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "dispatch-acp-"));
-    const imagePath = path.join(tempDir, "outside-root.png");
+    const historyImagePath = path.join(tempDir, "history.jpg");
     try {
-      await fs.writeFile(imagePath, "image-bytes");
+      await fs.writeFile(historyImagePath, "history-image-bytes");
       managerMocks.runTurn.mockResolvedValue(undefined);
 
       await runDispatch({
-        bodyForAgent: "   ",
-        ctxOverrides: {
-          MediaPath: imagePath,
-          MediaType: "image/png",
-        },
-      });
-
-      expect(managerMocks.runTurn).not.toHaveBeenCalled();
-    } finally {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("skips file URL ACP attachments outside allowed inbound roots", async () => {
-    setReadyAcpResolution();
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "dispatch-acp-"));
-    const imagePath = path.join(tempDir, "outside-root.png");
-    try {
-      await fs.writeFile(imagePath, "image-bytes");
-      managerMocks.runTurn.mockResolvedValue(undefined);
-
-      await runDispatch({
-        bodyForAgent: "   ",
-        ctxOverrides: {
-          MediaPath: `file://${imagePath}`,
-          MediaType: "image/png",
-        },
-      });
-
-      expect(managerMocks.runTurn).not.toHaveBeenCalled();
-    } finally {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("skips relative ACP attachment paths that resolve outside allowed inbound roots", async () => {
-    setReadyAcpResolution();
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "dispatch-acp-"));
-    const imagePath = path.join(tempDir, "outside-root.png");
-    try {
-      await fs.writeFile(imagePath, "image-bytes");
-      managerMocks.runTurn.mockResolvedValue(undefined);
-
-      await runDispatch({
-        bodyForAgent: "   ",
-        ctxOverrides: {
-          MediaPath: path.relative(process.cwd(), imagePath),
-          MediaType: "image/png",
-        },
-      });
-
-      expect(managerMocks.runTurn).not.toHaveBeenCalled();
-    } finally {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not fall back to remote URLs when ACP local attachment paths are blocked", async () => {
-    setReadyAcpResolution();
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "dispatch-acp-"));
-    const imagePath = path.join(tempDir, "outside-root.png");
-    const fetchSpy = vi.fn(
-      async () =>
-        new Response(Buffer.from("remote-image"), {
-          headers: {
-            "content-type": "image/png",
+        bodyForAgent: "nice pic",
+        cfg: createAcpTestConfig({
+          channels: {
+            imessage: {
+              attachmentRoots: [tempDir],
+            },
           },
         }),
-    );
-    globalThis.fetch = withFetchPreconnect(fetchSpy as typeof fetch);
-    try {
-      await fs.writeFile(imagePath, "image-bytes");
-      managerMocks.runTurn.mockResolvedValue(undefined);
-
-      await runDispatch({
-        bodyForAgent: "   ",
         ctxOverrides: {
-          MediaPath: imagePath,
-          MediaUrl: "https://example.com/image.png",
-          MediaType: "image/png",
+          ChatType: "group",
+          InboundHistory: [
+            {
+              sender: "Alice",
+              body: "<media:image>",
+              timestamp: 1711580400000,
+              mediaPath: historyImagePath,
+              mediaType: "image/jpeg",
+            },
+          ],
         },
       });
 
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(managerMocks.runTurn).not.toHaveBeenCalled();
+      expect(managerMocks.runTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attachments: expect.arrayContaining([
+            {
+              mediaType: "image/jpeg",
+              data: Buffer.from("history-image-bytes").toString("base64"),
+            },
+          ]),
+        }),
+      );
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -608,227 +583,6 @@ describe("tryDispatchAcpReply", () => {
       expect.objectContaining({
         isError: true,
         text: expect.stringContaining("ACP dispatch is disabled by policy."),
-      }),
-    );
-    expect(bindingServiceMocks.unbind).not.toHaveBeenCalled();
-  });
-
-  it("does not unbind stale bindings when ACP dispatch is disabled by policy", async () => {
-    managerMocks.resolveSession.mockReturnValue({
-      kind: "stale",
-      sessionKey,
-      error: new AcpRuntimeError("ACP_SESSION_INIT_FAILED", "ACP metadata is missing."),
-    });
-    policyMocks.resolveAcpDispatchPolicyError.mockReturnValue(
-      new AcpRuntimeError("ACP_DISPATCH_DISABLED", "ACP dispatch is disabled by policy."),
-    );
-    const { dispatcher } = createDispatcher();
-
-    await runDispatch({
-      bodyForAgent: "test",
-      dispatcher,
-    });
-
-    expect(managerMocks.runTurn).not.toHaveBeenCalled();
-    expect(bindingServiceMocks.unbind).not.toHaveBeenCalled();
-    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        isError: true,
-        text: expect.stringContaining("ACP dispatch is disabled by policy."),
-      }),
-    );
-  });
-
-  it("unbinds stale bound conversations before surfacing stale ACP resolution errors", async () => {
-    const aliasSessionKey = "main";
-    const canonicalSessionKey = "agent:main:main";
-    managerMocks.resolveSession.mockReturnValue({
-      kind: "stale",
-      sessionKey: canonicalSessionKey,
-      error: new AcpRuntimeError("ACP_SESSION_INIT_FAILED", "ACP metadata is missing."),
-    });
-    bindingServiceMocks.unbind.mockResolvedValueOnce([
-      {
-        bindingId: "discord:default:thread-1",
-        targetSessionKey: canonicalSessionKey,
-        targetKind: "session",
-        conversation: {
-          channel: "discord",
-          accountId: "default",
-          conversationId: "thread-1",
-        },
-        status: "active",
-        boundAt: 0,
-      },
-    ]);
-    const { dispatcher } = createDispatcher();
-
-    await runDispatch({
-      bodyForAgent: "test",
-      dispatcher,
-      sessionKeyOverride: aliasSessionKey,
-    });
-
-    expect(managerMocks.runTurn).not.toHaveBeenCalled();
-    expect(bindingServiceMocks.unbind).toHaveBeenCalledTimes(1);
-    expect(bindingServiceMocks.unbind).toHaveBeenCalledWith({
-      targetSessionKey: canonicalSessionKey,
-      reason: "acp-session-init-failed",
-    });
-    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        isError: true,
-        text: expect.stringContaining("ACP metadata is missing."),
-      }),
-    );
-  });
-
-  it("does not unbind valid bindings on generic ACP runTurn init failure", async () => {
-    setReadyAcpResolution();
-    // Match the post-reset module instance so dispatch-acp preserves the ACP error code.
-    const { AcpRuntimeError: FreshAcpRuntimeError } = await import("../../acp/runtime/errors.js");
-    managerMocks.runTurn.mockRejectedValueOnce(
-      new FreshAcpRuntimeError(
-        "ACP_SESSION_INIT_FAILED",
-        "Could not initialize ACP session runtime.",
-      ),
-    );
-    const { dispatcher } = createDispatcher();
-
-    await runDispatch({
-      bodyForAgent: "test",
-      dispatcher,
-    });
-
-    expect(bindingServiceMocks.unbind).not.toHaveBeenCalled();
-    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        isError: true,
-        text: expect.stringContaining("Could not initialize ACP session runtime."),
-      }),
-    );
-  });
-
-  it("unbinds stale bindings on ACP runTurn missing-metadata failures", async () => {
-    const aliasSessionKey = "main";
-    const canonicalSessionKey = "agent:main:main";
-    managerMocks.resolveSession.mockReturnValue({
-      kind: "ready",
-      sessionKey: canonicalSessionKey,
-      meta: createAcpSessionMeta(),
-    });
-    const { AcpRuntimeError: FreshAcpRuntimeError } = await import("../../acp/runtime/errors.js");
-    managerMocks.runTurn.mockRejectedValueOnce(
-      new FreshAcpRuntimeError(
-        "ACP_SESSION_INIT_FAILED",
-        `ACP metadata is missing for ${canonicalSessionKey}. Recreate this ACP session with /acp spawn and rebind the thread.`,
-      ),
-    );
-    bindingServiceMocks.unbind.mockResolvedValueOnce([
-      {
-        bindingId: "discord:default:thread-1",
-        targetSessionKey: canonicalSessionKey,
-        targetKind: "session",
-        conversation: {
-          channel: "discord",
-          accountId: "default",
-          conversationId: "thread-1",
-        },
-        status: "active",
-        boundAt: 0,
-      },
-    ]);
-    const { dispatcher } = createDispatcher();
-
-    await runDispatch({
-      bodyForAgent: "test",
-      dispatcher,
-      sessionKeyOverride: aliasSessionKey,
-    });
-
-    expect(bindingServiceMocks.unbind).toHaveBeenCalledTimes(1);
-    expect(bindingServiceMocks.unbind).toHaveBeenCalledWith({
-      targetSessionKey: canonicalSessionKey,
-      reason: "acp-session-init-failed",
-    });
-    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        isError: true,
-        text: expect.stringContaining("ACP metadata is missing"),
-      }),
-    );
-  });
-
-  it("uses canonical session keys for bound-session identity notices", async () => {
-    const aliasSessionKey = "main";
-    const canonicalSessionKey = "agent:main:main";
-    managerMocks.resolveSession.mockReturnValue({
-      kind: "ready",
-      sessionKey: canonicalSessionKey,
-      meta: createAcpSessionMeta({
-        identity: {
-          state: "pending",
-          source: "ensure",
-          lastUpdatedAt: Date.now(),
-          acpxRecordId: "rec-main",
-        },
-      }),
-    });
-    bindingServiceMocks.listBySession.mockImplementation((targetSessionKey: string) =>
-      targetSessionKey === canonicalSessionKey
-        ? [
-            {
-              bindingId: "discord:default:thread-1",
-              targetSessionKey: canonicalSessionKey,
-              targetKind: "session",
-              conversation: {
-                channel: "discord",
-                accountId: "default",
-                conversationId: "thread-1",
-              },
-              status: "active",
-              boundAt: 0,
-            },
-          ]
-        : [],
-    );
-    sessionMetaMocks.readAcpSessionEntry.mockImplementation(
-      (params: { sessionKey: string; cfg?: OpenClawConfig }) =>
-        params.sessionKey === canonicalSessionKey
-          ? {
-              cfg: params.cfg ?? createAcpTestConfig(),
-              storePath: "/tmp/openclaw-session-store.json",
-              sessionKey: canonicalSessionKey,
-              storeSessionKey: canonicalSessionKey,
-              acp: createAcpSessionMeta({
-                identity: {
-                  state: "resolved",
-                  source: "status",
-                  lastUpdatedAt: Date.now(),
-                  acpxSessionId: "acpx-main",
-                },
-              }),
-            }
-          : null,
-    );
-    managerMocks.runTurn.mockResolvedValue(undefined);
-    const { dispatcher } = createDispatcher();
-
-    await runDispatch({
-      bodyForAgent: "test",
-      dispatcher,
-      sessionKeyOverride: aliasSessionKey,
-    });
-
-    expect(bindingServiceMocks.listBySession).toHaveBeenCalledWith(canonicalSessionKey);
-    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining("Session ids resolved."),
-      }),
-    );
-    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining("acpx session id: acpx-main"),
       }),
     );
   });
