@@ -11,8 +11,24 @@ import {
   type OutboundSendDeps,
 } from "openclaw/plugin-sdk/outbound-runtime";
 import { resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-runtime";
+import { stripAssistantInternalScaffolding } from "openclaw/plugin-sdk/text-runtime";
 import { markdownToSignalTextChunks } from "./format.js";
 import { sendMessageSignal } from "./send.js";
+
+/**
+ * Strip reasoning tags and other assistant-internal scaffolding from text
+ * before delivering to Signal. Tag-based reasoning models (Qwen, GLM,
+ * DeepSeek) embed <think> blocks in the text stream which must not reach
+ * the end user.
+ */
+function sanitizeOutboundText(text: string): string {
+  if (!text) {
+    return text;
+  }
+  let cleaned = stripAssistantInternalScaffolding(text);
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+  return cleaned;
+}
 
 function resolveSignalSender(deps: OutboundSendDeps | undefined) {
   return resolveOutboundSendDep<typeof sendMessageSignal>(deps, "signal") ?? sendMessageSignal;
@@ -44,10 +60,11 @@ export const signalOutbound: ChannelOutboundAdapter = {
       fallbackLimit: 4000,
     });
     const tableMode = inferSignalTableMode({ cfg, accountId });
+    const sanitized = sanitizeOutboundText(text);
     let chunks =
       limit === undefined
-        ? markdownToSignalTextChunks(text, Number.POSITIVE_INFINITY, { tableMode })
-        : markdownToSignalTextChunks(text, limit, { tableMode });
+        ? markdownToSignalTextChunks(sanitized, Number.POSITIVE_INFINITY, { tableMode })
+        : markdownToSignalTextChunks(sanitized, limit, { tableMode });
     if (chunks.length === 0 && text) {
       chunks = [{ text, styles: [] }];
     }
@@ -83,7 +100,8 @@ export const signalOutbound: ChannelOutboundAdapter = {
       accountId: accountId ?? undefined,
     });
     const tableMode = inferSignalTableMode({ cfg, accountId });
-    const formatted = markdownToSignalTextChunks(text, Number.POSITIVE_INFINITY, {
+    const sanitized = sanitizeOutboundText(text);
+    const formatted = markdownToSignalTextChunks(sanitized, Number.POSITIVE_INFINITY, {
       tableMode,
     })[0] ?? {
       text,
@@ -109,7 +127,7 @@ export const signalOutbound: ChannelOutboundAdapter = {
         cfg,
         accountId: accountId ?? undefined,
       });
-      return await send(to, text, {
+      return await send(to, sanitizeOutboundText(text), {
         cfg,
         maxBytes,
         accountId: accountId ?? undefined,
@@ -130,7 +148,7 @@ export const signalOutbound: ChannelOutboundAdapter = {
         cfg,
         accountId: accountId ?? undefined,
       });
-      return await send(to, text, {
+      return await send(to, sanitizeOutboundText(text), {
         cfg,
         mediaUrl,
         maxBytes,
