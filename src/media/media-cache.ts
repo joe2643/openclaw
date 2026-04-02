@@ -92,3 +92,38 @@ export function buildCachedMediaMarker(
 export function mediaCacheKind(mimeType: string): MediaKind {
   return mediaKindFromMime(normalizeMimeType(mimeType)) ?? "document";
 }
+
+/**
+ * Delete cached media files older than `maxAgeMs` milliseconds.
+ *
+ * Designed to be called periodically (e.g., once per session) to prevent unbounded
+ * growth of `~/.openclaw/media/cache/`. Files are deleted based on their mtime so
+ * recently-accessed content-addressed files are naturally retained.
+ *
+ * Errors are swallowed — cache cleanup is best-effort and must not interrupt normal flow.
+ */
+export async function pruneMediaCache(maxAgeMs: number): Promise<void> {
+  const dir = resolveCacheDir();
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return; // cache dir doesn't exist yet; nothing to prune
+  }
+  const cutoff = Date.now() - maxAgeMs;
+  await Promise.allSettled(
+    entries
+      .filter((e) => e.isFile())
+      .map(async (e) => {
+        const filePath = path.join(dir, e.name);
+        try {
+          const stat = await fs.stat(filePath);
+          if (stat.mtimeMs < cutoff) {
+            await fs.unlink(filePath);
+          }
+        } catch {
+          // ignore individual file errors
+        }
+      }),
+  );
+}
