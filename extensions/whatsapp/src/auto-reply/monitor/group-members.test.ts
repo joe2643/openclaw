@@ -53,4 +53,21 @@ describe("formatGroupMembers", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("strips JID domain and device suffix from LID participants", () => {
+    const formatted = formatGroupMembers({
+      participants: ["101653353078797:1@hosted.lid", "+85251159218"],
+      roster: undefined,
+    });
+    // LID JID should show as "+101653353078797", phone JID as "+85251159218"
+    expect(formatted).toBe("+101653353078797, +85251159218");
+  });
+
+  it("deduplicates LID participants with same base number", () => {
+    const formatted = formatGroupMembers({
+      participants: ["101653353078797:0@hosted.lid", "101653353078797:1@hosted.lid"],
+      roster: undefined,
+    });
+    expect(formatted).toBe("+101653353078797");
+  });
 });
